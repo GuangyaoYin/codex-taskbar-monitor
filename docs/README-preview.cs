@@ -16,7 +16,7 @@ public static class ReadmePreview
     {
         string root = args.Length > 0 ? Path.GetFullPath(args[0]) :
             Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), ".."));
-        string product = Path.Combine(root, "release", "CodexTaskbarMonitor-1.2.0-win-x64", "CodexTaskbarMonitor.exe");
+        string product = Path.Combine(root, "release", "CodexTaskbarMonitor-1.2.1-win-x64", "CodexTaskbarMonitor.exe");
         AppDomain.CurrentDomain.AssemblyResolve += delegate(object sender, ResolveEventArgs e)
         {
             return e.Name.StartsWith("CodexTaskbarMonitor,", StringComparison.Ordinal) ? Assembly.LoadFrom(product) : null;
@@ -33,6 +33,7 @@ public static class ReadmePreview
         GpuSnapshot gpu = new GpuSnapshot { Id = "synthetic-gpu", Name = "Example GPU", UtilizationPercent = 12 };
         CodexSnapshot quota = new CodexSnapshot { Status = CodexStatus.Ready, StatusMessage = "Synthetic example" };
         QuotaBucket bucket = new QuotaBucket { Id = "codex", Name = "Codex" };
+        // Preserve the server's used-percent fixture; the painter shows 52% remaining.
         bucket.Windows.Add(new QuotaWindow { UsedPercent = 48, WindowDurationMins = 10080 });
         quota.Buckets.Add(bucket);
         NetworkSnapshot network = new NetworkSnapshot { DownloadBytesPerSecond = 1258291, UploadBytesPerSecond = 35840, InterfaceName = "Example adapter" };

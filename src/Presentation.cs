@@ -76,6 +76,13 @@ namespace CodexTaskbarMonitor
             return (value / 1073741824.0).ToString("0.0", CultureInfo.InvariantCulture) + " GiB";
         }
 
+        public static double? RemainingPercent(double? usedPercent)
+        {
+            if (!usedPercent.HasValue || Double.IsNaN(usedPercent.Value) ||
+                Double.IsInfinity(usedPercent.Value)) return null;
+            return 100 - Math.Max(0, Math.Min(100, usedPercent.Value));
+        }
+
         public static string Speed(double? bytesPerSecond)
         {
             if (!bytesPerSecond.HasValue || Double.IsNaN(bytesPerSecond.Value) ||
@@ -111,9 +118,9 @@ namespace CodexTaskbarMonitor
             QuotaBucket bucket = MainBucket(snapshot);
             if (bucket != null && bucket.Windows.Count > 0)
             {
-                StringBuilder text = new StringBuilder("Codex");
+                StringBuilder text = new StringBuilder("Codex 剩余");
                 foreach (QuotaWindow window in bucket.Windows)
-                    text.Append("  ").Append(WindowLabel(window.WindowDurationMins)).Append(" ").Append(Percent(window.UsedPercent));
+                    text.Append("  ").Append(WindowLabel(window.WindowDurationMins)).Append(" ").Append(Percent(RemainingPercent(window.UsedPercent)));
                 if (snapshot.IsStale || snapshot.Status != CodexStatus.Ready) text.Append("  旧");
                 return text.ToString();
             }
@@ -162,7 +169,7 @@ namespace CodexTaskbarMonitor
                     string name = !String.IsNullOrEmpty(bucket.Name) ? bucket.Name : bucket.Id;
                     foreach (QuotaWindow window in bucket.Windows)
                     {
-                        lines.Add(name + "  " + WindowLabel(window.WindowDurationMins) + "已用 " + Percent(window.UsedPercent));
+                        lines.Add(name + "  " + WindowLabel(window.WindowDurationMins) + "剩余 " + Percent(RemainingPercent(window.UsedPercent)));
                         lines.Add("重置：" + (window.ResetsAtUtc.HasValue ? window.ResetsAtUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "未提供"));
                     }
                 }

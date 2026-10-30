@@ -30,8 +30,8 @@ public static class LiveMonitorWindows {
 [LiveMonitorWindows]::SetThreadDpiAwarenessContext([IntPtr](-4)) | Out-Null
 $taskRoot=Split-Path -Parent $PSScriptRoot
 $taskProcess=Get-Process -Id $MonitorProcessId
-$taskExpected=if($ExecutablePath){[IO.Path]::GetFullPath($ExecutablePath)}else{Join-Path $taskRoot 'release\CodexTaskbarMonitor-1.2.0-win-x64\CodexTaskbarMonitor.exe'}
-if(-not $ValidationDirectory){$ValidationDirectory=Join-Path $taskRoot 'validation\v1.2'}
+$taskExpected=if($ExecutablePath){[IO.Path]::GetFullPath($ExecutablePath)}else{Join-Path $taskRoot 'release\CodexTaskbarMonitor-1.2.1-win-x64\CodexTaskbarMonitor.exe'}
+if(-not $ValidationDirectory){$ValidationDirectory=Join-Path $taskRoot 'validation\v1.2.1'}
 New-Item -ItemType Directory -Path $ValidationDirectory -Force | Out-Null
 if ($taskProcess.Path -ne $taskExpected) { throw 'The PID is not the expected monitor executable.' }
 $taskCpuBefore=$taskProcess.TotalProcessorTime.TotalMilliseconds

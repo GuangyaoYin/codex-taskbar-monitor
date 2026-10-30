@@ -169,6 +169,7 @@ namespace CodexTaskbarMonitor
                 MixedText.Draw(g,text,11*s,stale?p.Warning:p.Muted,76*s,22*s,false);
                 return;
             }
+            MixedText.Draw(g,"剩余",9*s,p.Muted,54*s,23*s,false);
             float left=74*s,right=232*s;
             if(stale)
             {
@@ -189,14 +190,15 @@ namespace CodexTaskbarMonitor
                 if(labelWidth>maximumLabel) labelSize*=maximumLabel/labelWidth;
                 labelWidth=MixedText.Measure(g,label,labelSize).Width;
                 MixedText.Draw(g,label,labelSize,p.Muted,x,23*s,false);
-                string value=DisplayText.Percent(window.UsedPercent);
+                double? remaining=DisplayText.RemainingPercent(window.UsedPercent);
+                string value=DisplayText.Percent(remaining);
+                Color fill=stale?p.Warning:remaining<=10?p.Danger:remaining<=25?p.Warning:p.Accent;
                 float valueWidth=MixedText.Measure(g,value,12*s).Width+2*s;
-                VisualStyle.RightText(g,value,12*s,p.Foreground,x+cell,21*s,true);
+                VisualStyle.RightText(g,value,12*s,remaining<=25?fill:p.Foreground,x+cell,21*s,true);
                 float trackLeft=x+labelWidth+6*s;
                 float trackRight=x+cell-valueWidth-6*s;
-                Color fill=stale?p.Warning:window.UsedPercent>=90?p.Danger:window.UsedPercent>=75?p.Warning:p.Accent;
                 if(trackRight>trackLeft)
-                    VisualStyle.Progress(g,new RectangleF(trackLeft,28*s,trackRight-trackLeft,3*s),window.UsedPercent,p.Track,fill);
+                    VisualStyle.Progress(g,new RectangleF(trackLeft,28*s,trackRight-trackLeft,3*s),remaining,p.Track,fill);
             }
         }
 

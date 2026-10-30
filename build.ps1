@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 $taskCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $taskCompiler)) { throw '64-bit .NET Framework C# compiler was not found.' }
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $taskRoot 'release\CodexTaskbarMonitor-1.2.0-win-x64' }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $taskRoot 'release\CodexTaskbarMonitor-1.2.1-win-x64' }
 $taskOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $taskOutput -Force | Out-Null
 $taskWpf = Join-Path (Split-Path -Parent $taskCompiler) 'WPF'

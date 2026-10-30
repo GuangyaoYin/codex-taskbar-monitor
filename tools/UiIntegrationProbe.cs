@@ -37,7 +37,7 @@ public static class UiIntegrationProbe
         };
         Assembly productAssembly = Assembly.LoadFrom(product);
         Version version = productAssembly.GetName().Version;
-        reportDirectory = Path.Combine(projectRoot, "validation", "v" + version.Major + "." + version.Minor);
+        reportDirectory = Path.Combine(projectRoot, "validation", "v" + version.Major + "." + version.Minor + (version.Build > 0 ? "." + version.Build : String.Empty));
         Console.WriteLine("Product=" + product);
         using (SHA256 sha = SHA256.Create())
         using (FileStream stream = File.OpenRead(product))
@@ -190,6 +190,7 @@ public static class UiIntegrationProbe
             form.Hide();
         }
         RunPainterMatrix();
+        VerifyRemainingQuota();
         Console.WriteLine("Failures=" + failures);
         return failures == 0 ? 0 : 1;
     }
@@ -265,9 +266,9 @@ public static class UiIntegrationProbe
     {
         string output = reportDirectory;
         Directory.CreateDirectory(output);
-        string[] states = { "single", "dual", "unknown", "stale-dual", "missing", "loading", "net-zero", "net-fast" };
+        string[] states = { "single", "dual", "unknown", "stale-dual", "missing", "loading", "net-zero", "net-fast", "quota-57-28", "quota-low", "quota-empty", "quota-invalid" };
         int cellWidth = 540, cellHeight = 85;
-        using (Bitmap sheet = new Bitmap(cellWidth * 2, cellHeight * 16))
+        using (Bitmap sheet = new Bitmap(cellWidth * 2, cellHeight * 24))
         using (Graphics grid = Graphics.FromImage(sheet))
         using (Font captionFont = new Font("Times New Roman", 12, FontStyle.Regular, GraphicsUnit.Pixel))
         using (Brush captionBrush = new SolidBrush(Color.FromArgb(35, 40, 48)))
@@ -280,6 +281,7 @@ public static class UiIntegrationProbe
             bool allNetworkRowsPainted = true;
             bool allNetworkGaps = true;
             bool legacyPanelUnchanged = true;
+            bool remainingMarkerFits = true;
             float smallestGap = Single.MaxValue;
             float smallestNetworkGap = Single.MaxValue;
             foreach (int dpi in new int[] { 96, 144 })
@@ -297,11 +299,15 @@ public static class UiIntegrationProbe
                             quota.Buckets.Clear();
                             network.DownloadBytesPerSecond = null; network.UploadBytesPerSecond = null;
                         }
-                        if (state == "stale-dual") { quota.IsStale = true; quota.Status = CodexStatus.Error; }
+                        if (state == "stale-dual") { quota.IsStale = true; quota.Status = CodexStatus.Error; quota.Buckets[0].Windows[0].UsedPercent = 43; quota.Buckets[0].Windows[1].UsedPercent = 72; }
                         if (state == "missing") { quota.Buckets.Clear(); quota.Status = CodexStatus.Missing; }
                         if (state == "loading") { quota = null; hardware = null; network = null; }
                         if (state == "net-zero") { network.DownloadBytesPerSecond = 0; network.UploadBytesPerSecond = 0; }
                         if (state == "net-fast") { network.DownloadBytesPerSecond = 1024.0 * 1048576; network.UploadBytesPerSecond = 1023.95 * 1048576; }
+                        if (state == "quota-57-28") { quota.Buckets[0].Windows[0].UsedPercent = 43; quota.Buckets[0].Windows[1].UsedPercent = 72; }
+                        if (state == "quota-low") { quota.Buckets[0].Windows[0].UsedPercent = 95; quota.Buckets[0].Windows[1].UsedPercent = 80; }
+                        if (state == "quota-empty") { quota.Buckets[0].Windows[0].UsedPercent = 100; quota.Buckets[0].Windows[1].UsedPercent = 100; }
+                        if (state == "quota-invalid") { quota.Buckets[0].Windows[0].UsedPercent = Double.NaN; quota.Buckets[0].Windows[1].UsedPercent = Double.PositiveInfinity; }
                         using (Bitmap bitmap = new Bitmap((int)(CompactPainter.PreferredWidthDip * s), (int)(CompactPainter.PreferredHeightDip * s)))
                         using (Graphics graphics = Graphics.FromImage(bitmap))
                         {
@@ -334,6 +340,8 @@ public static class UiIntegrationProbe
                             float gap = 58 * s - MixedText.Measure(graphics, "RAM", 10 * s).Width - BoldWidth(graphics, "100%", 12.5f * s);
                             smallestGap = Math.Min(smallestGap, gap / s);
                             allMetricGaps &= gap >= 3.5f * s;
+                            remainingMarkerFits &= 54 * s - (21 * s + BoldWidth(graphics, "Codex", 11.5f * s)) >= 1 * s &&
+                                54 * s + MixedText.Measure(graphics, "剩余", 9 * s).Width <= 73 * s;
                             int column = frame % 2, row = frame / 2;
                             grid.DrawString(dpi + " DPI / " + (dark ? "dark" : "light") + " / " + state, captionFont, captionBrush,
                                 column * cellWidth + 10, row * cellHeight + 4);
@@ -341,12 +349,13 @@ public static class UiIntegrationProbe
                             frame++;
                         }
                     }
-            Check("CompactPainter 32-case matrix leaves all outer edges clear", allEdgesClear);
-            Check("CompactPainter 32-case matrix paints both original rows", allRowsPainted);
+            Check("CompactPainter 48-case matrix leaves all outer edges clear", allEdgesClear);
+            Check("CompactPainter 48-case matrix paints both original rows", allRowsPainted);
             Check("Worst-case metric labels and bold values keep readable separation", allMetricGaps);
             Check("Network download and upload both paint independently of Codex state", allNetworkRowsPainted);
             Check("Network value and arrow retain at least 4DIP separation", allNetworkGaps);
             Check("Original 240DIP panel remains pixel-identical in wide and legacy draws", legacyPanelUnchanged);
+            Check("Remaining marker stays separated from Codex and cycle labels at both DPIs", remainingMarkerFits);
             Check("Network unknown and invalid values are not reported as measured zero", DisplayText.Speed(null) == "--" &&
                 DisplayText.Speed(Double.NaN) == "--" && DisplayText.Speed(Double.PositiveInfinity) == "--" && DisplayText.Speed(-1) == "--");
             Check("Network formatter scales numeric values into B KB MB and GB per second", DisplayText.Speed(0) == "0 B/s" &&
@@ -358,6 +367,96 @@ public static class UiIntegrationProbe
             sheet.Save(path, System.Drawing.Imaging.ImageFormat.Png);
             Console.WriteLine("PainterMatrix=" + path);
         }
+    }
+
+    private static void VerifyRemainingQuota()
+    {
+        Check("Quota conversion displays 57 remaining for 43 used and clamps valid bounds", DisplayText.RemainingPercent(43) == 57 &&
+            DisplayText.RemainingPercent(0) == 100 && DisplayText.RemainingPercent(100) == 0 &&
+            DisplayText.RemainingPercent(-5) == 100 && DisplayText.RemainingPercent(110) == 0);
+        Check("Unknown quota values remain unknown rather than becoming 100 remaining", !DisplayText.RemainingPercent(null).HasValue &&
+            !DisplayText.RemainingPercent(Double.NaN).HasValue && !DisplayText.RemainingPercent(Double.PositiveInfinity).HasValue);
+
+        CodexSnapshot dual = MakeQuota(1);
+        dual.Buckets[0].Windows[0].UsedPercent = 43;
+        dual.Buckets[0].Windows[1].UsedPercent = 72;
+        string compact = DisplayText.CompactQuota(dual);
+        List<string> details = DisplayText.Details(null, null, dual, null);
+        Check("Compact text and details identify 57 and 28 as remaining per cycle", compact.Contains("剩余") && compact.Contains("57%") && compact.Contains("28%") &&
+            !compact.Contains("43%") && !compact.Contains("72%") && details.Exists(delegate(string line) { return line.Contains("5h剩余 57%"); }) &&
+            details.Exists(delegate(string line) { return line.Contains("周剩余 28%"); }) && !details.Exists(delegate(string line) { return line.Contains("已用"); }));
+
+        bool missingHasNoHundred = !DisplayText.CompactQuota(null).Contains("100%");
+        foreach (CodexStatus status in new CodexStatus[] { CodexStatus.Missing, CodexStatus.LoginRequired, CodexStatus.Error, CodexStatus.Ready })
+            missingHasNoHundred &= !DisplayText.CompactQuota(new CodexSnapshot { Status = status }).Contains("100%");
+        CodexSnapshot invalid = MakeQuota(1);
+        invalid.Buckets[0].Windows[0].UsedPercent = Double.NaN;
+        invalid.Buckets[0].Windows[1].UsedPercent = Double.PositiveInfinity;
+        missingHasNoHundred &= DisplayText.CompactQuota(invalid).Contains("--") && !DisplayText.CompactQuota(invalid).Contains("100%");
+        Check("Missing empty and invalid quota snapshots never fabricate 100 remaining", missingHasNoHundred);
+
+        bool progressCorrect = true;
+        bool warningCorrect = true;
+        foreach (int dpi in new int[] { 96, 144 })
+            foreach (bool dark in new bool[] { false, true })
+            {
+                float s = dpi / 96.0f;
+                MonitorPalette p = MonitorPalette.For(dark);
+                using (Bitmap full = RenderSingleQuota(0, false, s, dark))
+                using (Bitmap half = RenderSingleQuota(50, false, s, dark))
+                using (Bitmap empty = RenderSingleQuota(100, false, s, dark))
+                using (Bitmap unknown = RenderSingleQuota(Double.NaN, false, s, dark))
+                using (Bitmap low = RenderSingleQuota(95, false, s, dark))
+                using (Bitmap medium = RenderSingleQuota(80, false, s, dark))
+                using (Bitmap high = RenderSingleQuota(20, false, s, dark))
+                using (Bitmap stale = RenderSingleQuota(100, true, s, dark))
+                {
+                    Rectangle track = new Rectangle((int)(90 * s), (int)(28 * s), (int)(100 * s), Math.Max(1, (int)(3 * s)));
+                    Rectangle value = new Rectangle((int)(211 * s), (int)(22 * s), (int)(22 * s), (int)(13 * s));
+                    Rectangle staleValue = new Rectangle((int)(198 * s), (int)(22 * s), (int)(18 * s), (int)(13 * s));
+                    int fullPixels = ColorPixels(full, track, p.Accent);
+                    int halfPixels = ColorPixels(half, track, p.Accent);
+                    progressCorrect &= fullPixels > 0 && halfPixels > fullPixels * 0.25 && halfPixels < fullPixels * 0.75 &&
+                        FillPixels(empty, track, p) == 0 && FillPixels(unknown, track, p) == 0;
+                    warningCorrect &= ColorPixels(low, track, p.Danger) > 0 && ColorPixels(medium, track, p.Warning) > 0 &&
+                        ColorPixels(high, track, p.Accent) > 0 && ColorPixels(empty, value, p.Danger) > 0 &&
+                        ColorPixels(low, value, p.Danger) > 0 && ColorPixels(medium, value, p.Warning) > 0 &&
+                        ColorPixels(high, value, p.Foreground) > 0 && ColorPixels(stale, staleValue, p.Warning) > 0;
+                    Console.WriteLine("RemainingPixels dpi=" + dpi + "; dark=" + dark + "; full=" + fullPixels + "; half=" + halfPixels + "; empty=" + FillPixels(empty, track, p));
+                }
+            }
+        Check("Remaining progress fills high half and zero in the correct direction", progressCorrect);
+        Check("Low remaining warns including red zero digits and stale warning priority", warningCorrect);
+    }
+
+    private static Bitmap RenderSingleQuota(double used, bool stale, float scale, bool dark)
+    {
+        CodexSnapshot quota = MakeQuota(1);
+        quota.Buckets[0].Windows.RemoveAt(0);
+        quota.Buckets[0].Windows[0].UsedPercent = used;
+        quota.IsStale = stale;
+        if (stale) quota.Status = CodexStatus.Error;
+        Bitmap bitmap = new Bitmap((int)(240 * scale), (int)(38 * scale));
+        using (Graphics graphics = Graphics.FromImage(bitmap))
+            CompactPainter.Draw(graphics, new Rectangle(Point.Empty, bitmap.Size), scale, dark, false, MakeHardware(), null, quota);
+        return bitmap;
+    }
+
+    private static int FillPixels(Bitmap bitmap, Rectangle area, MonitorPalette palette)
+    {
+        return ColorPixels(bitmap, area, palette.Accent) + ColorPixels(bitmap, area, palette.Warning) + ColorPixels(bitmap, area, palette.Danger);
+    }
+
+    private static int ColorPixels(Bitmap bitmap, Rectangle area, Color expected)
+    {
+        int pixels = 0;
+        for (int y = area.Top; y < area.Bottom; y++)
+            for (int x = area.Left; x < area.Right; x++)
+            {
+                Color color = bitmap.GetPixel(x, y);
+                if (Math.Abs(color.R - expected.R) + Math.Abs(color.G - expected.G) + Math.Abs(color.B - expected.B) < 18) pixels++;
+            }
+        return pixels;
     }
 
     private static bool SamePixels(Bitmap wide, Bitmap legacy)
@@ -417,8 +516,8 @@ public static class UiIntegrationProbe
         for (int index = 0; index < buckets; index++)
         {
             QuotaBucket bucket = new QuotaBucket { Id = index == 0 ? "codex" : "test-" + index, Name = "Codex 测试额度 " + index };
-            bucket.Windows.Add(new QuotaWindow { UsedPercent = 100, WindowDurationMins = 300, ResetsAtUtc = DateTime.UtcNow.AddHours(1) });
-            bucket.Windows.Add(new QuotaWindow { UsedPercent = 100, WindowDurationMins = 10080, ResetsAtUtc = DateTime.UtcNow.AddDays(1) });
+            bucket.Windows.Add(new QuotaWindow { UsedPercent = 0, WindowDurationMins = 300, ResetsAtUtc = DateTime.UtcNow.AddHours(1) });
+            bucket.Windows.Add(new QuotaWindow { UsedPercent = 0, WindowDurationMins = 10080, ResetsAtUtc = DateTime.UtcNow.AddDays(1) });
             result.Buckets.Add(bucket);
         }
         return result;

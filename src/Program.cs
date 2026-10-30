@@ -38,9 +38,13 @@ namespace CodexTaskbarMonitor
             QuotaBucket bucket = new QuotaBucket { Id = "codex" };
             bucket.Windows.Add(new QuotaWindow { UsedPercent = 43, WindowDurationMins = 10080 });
             quota.Buckets.Add(bucket);
-            if (DisplayText.CompactQuota(quota) != "Codex  周 43%") return 3;
+            if (DisplayText.CompactQuota(quota) != "Codex 剩余  周 57%") return 3;
             quota.IsStale = true;
             if (!DisplayText.CompactQuota(quota).EndsWith("旧")) return 4;
+            if (DisplayText.RemainingPercent(54) != 46 || DisplayText.RemainingPercent(0) != 100 ||
+                DisplayText.RemainingPercent(100) != 0) return 5;
+            if (DisplayText.RemainingPercent(null).HasValue || DisplayText.RemainingPercent(Double.NaN).HasValue ||
+                DisplayText.RemainingPercent(Double.PositiveInfinity).HasValue) return 6;
             return 0;
         }
 

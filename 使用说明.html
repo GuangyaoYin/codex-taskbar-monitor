@@ -2,12 +2,12 @@
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>任务栏状态条 · 使用说明</title>
 <style>body{font-family:"Times New Roman",SimSun,serif;max-width:850px;margin:40px auto;padding:0 24px;color:#222;line-height:1.8}h1,h2,h3,button,table{font-family:"Times New Roman",SimSun,serif}h1{font-size:28px}h2{font-size:21px;margin-top:30px}code{font-family:"Times New Roman",SimSun,serif;background:#f2f4f6;padding:2px 5px}a{color:#175a9d}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;text-align:left;padding:8px 12px}.note{background:#eef5fb;padding:12px 18px;border-left:3px solid #4b79a3}</style>
-<h1>任务栏状态条</h1><p>Windows 10/11 64 位 · 免安装 · 版本 1.2</p>
+<h1>任务栏状态条</h1><p>Windows 10/11 64 位 · 免安装 · 版本 1.2.1</p>
 <div class="note">解压压缩包后，双击 <code>CodexTaskbarMonitor.exe</code>。程序会在主屏任务栏通知区左侧显示两行数据。开机启动默认关闭。</div>
 <h2>显示与操作</h2>
-<table><tr><th>操作</th><th>作用</th></tr><tr><td>上行</td><td>CPU、物理内存和选中 GPU 的使用率，每秒刷新。</td></tr><tr><td>下行</td><td>Codex 额度的已用百分比。按接口实际返回的周期显示；周额度不等同于 5 小时额度。</td></tr><tr><td>鼠标悬停</td><td>查看内存容量、GPU 名称、显存、各额度周期的重置时间和最后更新时间。时间按本机时区显示。</td></tr><tr><td>左键拖动</td><td>在当前任务栏空白范围内调整位置，松开后记住。</td></tr><tr><td>右键</td><td>手动刷新额度、切换 GPU、恢复自动位置、选择 Codex 路径、登录、设置开机启动或退出。</td></tr><tr><td>托盘入口</td><td>小窗隐藏时，仍可从系统托盘图标打开详情与菜单。图标可能收在系统的“隐藏图标”区域。</td></tr></table>
+<table><tr><th>操作</th><th>作用</th></tr><tr><td>上行</td><td>CPU、物理内存和选中 GPU 的使用率，每秒刷新。</td></tr><tr><td>下行</td><td>Codex 额度的剩余百分比。接口已用 54% 时显示剩余 46%。按接口实际返回的周期显示；周额度不等同于 5 小时额度。</td></tr><tr><td>鼠标悬停</td><td>查看内存容量、GPU 名称、显存、各额度周期的剩余比例、重置时间和最后更新时间。时间按本机时区显示。</td></tr><tr><td>左键拖动</td><td>在当前任务栏空白范围内调整位置，松开后记住。</td></tr><tr><td>右键</td><td>手动刷新额度、切换 GPU、恢复自动位置、选择 Codex 路径、登录、设置开机启动或退出。</td></tr><tr><td>托盘入口</td><td>小窗隐藏时，仍可从系统托盘图标打开详情与菜单。图标可能收在系统的“隐藏图标”区域。</td></tr></table>
 <p>小窗采用圆角、等宽指标列和细进度条，随系统明暗主题调整。右侧两行分别用向下和向上箭头显示下载、上传网速，每秒刷新，按 B/s、KB/s、MB/s 等单位自动换算（每级 1024）。悬停查看当前采集网卡；每次只采一个主联网接口，避免将物理网卡与 VPN 叠加。首次采样、断网或切换接口时显示 <code>--</code>，稳定后的真实零流量显示 <code>0 B/s</code>。</p>
-<p>进度条表示已用比例，缺失数据保留空轨道。任务栏隐藏、主屏全屏显示或空白空间不足时，小窗收起，保留托盘入口。程序不修改任务栏或 Explorer；小窗是独立窗口。</p>
+<p>CPU、内存和 GPU 的进度条表示使用率；Codex 进度条表示剩余额度。Codex 剩余不超过 10% 时提示危险，超过 10% 且不超过 25% 时提示警告；缺失数据保留空轨道。任务栏隐藏、主屏全屏显示或空白空间不足时，小窗收起，保留托盘入口。程序不修改任务栏或 Explorer；小窗是独立窗口。</p>
 <h2>Codex 额度</h2>
 <p>每位用户使用自己安装并登录的官方 Codex。程序自动查找官方桌面附带 CLI、PATH 中的 CLI 及常见安装位置；也可在菜单手动选择 <code>codex.exe</code>。不包含 Codex 运行时、账号或登录凭据。</p>
 <ol><li>没有安装 Codex 时，先阅读 <a href="https://learn.chatgpt.com/docs/cli">官方 CLI 安装说明</a>，或安装官方 Codex 桌面应用。</li><li>使用 ChatGPT 账号登录 Codex。菜单“登录 Codex”会启动官方登录流程；也可自行在终端运行 <code>codex login</code>。</li><li>回到菜单选择“刷新 Codex 额度”。硬件监控不依赖此登录。</li></ol>

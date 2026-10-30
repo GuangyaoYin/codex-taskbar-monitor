@@ -1,26 +1,27 @@
 # Codex Taskbar Monitor
 
-在 Windows 任务栏右侧查看 CPU、内存、GPU 使用率、实时下载／上传网速，以及 Codex 额度的**已用百分比**。
+在 Windows 任务栏右侧查看 CPU、内存、GPU 使用率、实时下载／上传网速，以及 Codex 额度的**剩余百分比**。
 
 [下载最新 Windows x64 免安装包](https://github.com/GuangyaoYin/codex-taskbar-monitor/releases/latest)
 
 浅色与深色界面。下图由程序绘制器生成，使用合成示例数据，不含私人账号信息。
 
-![浅色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度已用 48%，右侧显示下载和上传网速](docs/images/monitor-light.png)
+![浅色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度剩余 52%，右侧显示下载和上传网速](docs/images/monitor-light.png)
 
-![深色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度已用 48%，右侧显示下载和上传网速](docs/images/monitor-dark.png)
+![深色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度剩余 52%，右侧显示下载和上传网速](docs/images/monitor-dark.png)
 
 ## 功能
 
 - 上行显示 CPU、物理内存和选中 GPU 的使用率；支持切换 GPU。
 - 右侧双行显示下载、上传网速，每秒刷新并自动切换 B/s、KB/s、MB/s 等单位；悬停查看采集网卡。
-- 下行显示 Codex 返回的额度周期和已用比例，例如周额度或 5 小时额度。未返回的周期不会被补成 0%。
+- 下行显示 Codex 返回的额度周期及其剩余比例，例如周额度或 5 小时额度。接口已用 54% 时，界面显示剩余 46%；未返回的周期不会被补成 0%。
+- Codex 进度条表示剩余额度：剩余不超过 10% 时提示危险，超过 10% 且不超过 25% 时提示警告。CPU、内存和 GPU 的进度条仍表示使用率。
 - 悬停查看内存容量、GPU 名称与显存、额度重置时间及最后更新时间；时间按本机时区显示。
 - 独立浮窗贴靠主屏任务栏通知区左侧，可拖动并记住位置；保留托盘入口和右键菜单。
 - 正常情况下硬件与网速每秒刷新，额度每两分钟刷新。临时额度查询失败时保留并标记旧数据，按 15、30、60、120 秒恢复重试，详情显示下一次重试时刻。
 - 开机启动默认关闭，可由用户自行开启。
 
-v1.2 在等宽指标列、细线图标、进度条和圆角详情上增加了双向网速，随系统切换亮暗主题。中文使用宋体（SimSun），英文和数字使用 Times New Roman。
+v1.2.1 将 Codex 额度文字和进度条统一为剩余比例，保留双向网速、等宽指标列、细线图标和圆角详情，随系统切换亮暗主题。中文使用宋体（SimSun），英文和数字使用 Times New Roman。
 
 ## 使用
 
@@ -51,12 +52,12 @@ v1.2 在等宽指标列、细线图标、进度条和圆角详情上增加了双
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-脚本使用系统的 .NET Framework x64 C# 编译器，生成 `release/CodexTaskbarMonitor-1.2.0-win-x64/` 和对应压缩包。代码使用 C# 5，无第三方 NuGet 依赖。
+脚本使用系统的 .NET Framework x64 C# 编译器，生成 `release/CodexTaskbarMonitor-1.2.1-win-x64/` 和对应压缩包。代码使用 C# 5，无第三方 NuGet 依赖。
 
 运行内置显示格式自检：
 
 ```powershell
-$check = Start-Process .\release\CodexTaskbarMonitor-1.2.0-win-x64\CodexTaskbarMonitor.exe `
+$check = Start-Process .\release\CodexTaskbarMonitor-1.2.1-win-x64\CodexTaskbarMonitor.exe `
     -ArgumentList '--self-test' -Wait -PassThru
 $check.ExitCode  # 0 表示通过
 ```
@@ -65,4 +66,4 @@ $check.ExitCode  # 0 表示通过
 
 ## English
 
-A portable Windows 10/11 x64 utility for CPU, RAM, GPU usage, live download/upload speed and Codex quota **used percentages**. It shows a compact, theme-aware window beside the primary taskbar, with reset times in hover details and a tray menu. Codex quota reading requires your own official Codex installation and ChatGPT login; no CLI or credentials are bundled. Windows 10 support has been checked with simulated taskbar geometry and still needs validation on a physical Windows 10 machine.
+A portable Windows 10/11 x64 utility for CPU, RAM, GPU usage, live download/upload speed and Codex quota **remaining percentages**. Codex text and progress bars show remaining capacity: 54% used becomes 46% remaining. At most 10% remaining is critical; above 10% and at most 25% remaining is a warning. Hardware bars continue to show usage. It shows a compact, theme-aware window beside the primary taskbar, with reset times in hover details and a tray menu. Codex quota reading requires your own official Codex installation and ChatGPT login; no CLI or credentials are bundled. Windows 10 support has been checked with simulated taskbar geometry and still needs validation on a physical Windows 10 machine.
