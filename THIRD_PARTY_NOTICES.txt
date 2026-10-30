@@ -1,0 +1,9 @@
+Codex Taskbar Monitor 1.1
+
+This distribution contains the monitor executable and documentation only.
+It does not include OpenAI Codex, NVIDIA software, fonts, or their runtime files.
+It uses Windows/.NET Framework APIs and, when available, the installed GPU driver.
+Codex quota information is requested from the user's separately installed official
+Codex App Server using account/rateLimits/read. No model inference is requested.
+OpenAI, Codex, Microsoft, Windows, NVIDIA and other names belong to their respective owners.
+This independent utility is not an official OpenAI, Microsoft, or NVIDIA product.

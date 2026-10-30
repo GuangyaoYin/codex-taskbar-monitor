@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>任务栏状态条 · 使用说明</title>
+<style>body{font-family:"Times New Roman",SimSun,serif;max-width:850px;margin:40px auto;padding:0 24px;color:#222;line-height:1.8}h1,h2,h3,button,table{font-family:"Times New Roman",SimSun,serif}h1{font-size:28px}h2{font-size:21px;margin-top:30px}code{font-family:"Times New Roman",SimSun,serif;background:#f2f4f6;padding:2px 5px}a{color:#175a9d}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;text-align:left;padding:8px 12px}.note{background:#eef5fb;padding:12px 18px;border-left:3px solid #4b79a3}</style>
+<h1>任务栏状态条</h1><p>Windows 10/11 64 位 · 免安装 · 版本 1.1</p>
+<div class="note">解压压缩包后，双击 <code>CodexTaskbarMonitor.exe</code>。程序会在主屏任务栏通知区左侧显示两行数据。开机启动默认关闭。</div>
+<h2>显示与操作</h2>
+<table><tr><th>操作</th><th>作用</th></tr><tr><td>上行</td><td>CPU、物理内存和选中 GPU 的使用率，每秒刷新。</td></tr><tr><td>下行</td><td>Codex 额度的已用百分比。按接口实际返回的周期显示；周额度不等同于 5 小时额度。</td></tr><tr><td>鼠标悬停</td><td>查看内存容量、GPU 名称、显存、各额度周期的重置时间和最后更新时间。时间按本机时区显示。</td></tr><tr><td>左键拖动</td><td>在当前任务栏空白范围内调整位置，松开后记住。</td></tr><tr><td>右键</td><td>手动刷新额度、切换 GPU、恢复自动位置、选择 Codex 路径、登录、设置开机启动或退出。</td></tr><tr><td>托盘入口</td><td>小窗隐藏时，仍可从系统托盘图标打开详情与菜单。图标可能收在系统的“隐藏图标”区域。</td></tr></table>
+<p>小窗采用圆角、等宽指标列和细进度条，随系统明暗主题调整。进度条表示已用比例，缺失数据保留空轨道。任务栏隐藏、主屏全屏显示或空白空间不足时，小窗收起，保留托盘入口。程序不修改任务栏或 Explorer；小窗是独立窗口。</p>
+<h2>Codex 额度</h2>
+<p>每位用户使用自己安装并登录的官方 Codex。程序自动查找官方桌面附带 CLI、PATH 中的 CLI 及常见安装位置；也可在菜单手动选择 <code>codex.exe</code>。不包含 Codex 运行时、账号或登录凭据。</p>
+<ol><li>没有安装 Codex 时，先阅读 <a href="https://learn.chatgpt.com/docs/cli">官方 CLI 安装说明</a>，或安装官方 Codex 桌面应用。</li><li>使用 ChatGPT 账号登录 Codex。菜单“登录 Codex”会启动官方登录流程；也可自行在终端运行 <code>codex login</code>。</li><li>回到菜单选择“刷新 Codex 额度”。硬件监控不依赖此登录。</li></ol>
+<p>程序只调用 <a href="https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt">App Server 额度读取接口</a>，不创建对话、不请求模型、不使用额度重置券。正常每两分钟刷新；失败后逐步延长重试间隔，可随时手动重试。接口未返回的周期不会显示为 0%。</p>
+<p>下行出现“旧”表示显示的是最后一次成功数据；详情会注明失败状态和更新时间。退出登录、断网、接口变化或 CLI 版本过旧都可能导致查询失败。App Server 仍可能随 Codex 版本变化，需要更新小工具。</p>
+<h2>硬件数据口径</h2>
+<p>CPU 取系统忙碌时间比例；内存取物理内存使用率。NVIDIA 优先直接调用已安装驱动的 NVML；其他 GPU 使用 Windows GPU 性能计数器。驱动或硬件不支持时显示 <code>--</code>，详情注明来源；显存容量不可用时不猜测数值。不同 GPU 采集口径可能与任务管理器略有差异。</p>
+<h2>设置与退出</h2>
+<p>设置保存在当前用户的 <code>%LOCALAPPDATA%\CodexTaskbarMonitor\settings.json</code>，只包含位置、GPU 选择和用户指定的程序路径。额度数据仅保存在本次运行内存中。启用开机启动后，会在当前用户的 Windows 启动项中记录程序路径；移动程序文件夹后需重新开关此选项。</p>
+<p>右键选择“退出”可停止小窗、采集和本工具启动的额度查询子进程。如已开启自启，先关闭“开机启动”，再退出并删除解压文件夹即可移除程序。</p>
+<h2>兼容性与排查</h2>
+<p>面向 Windows 10/11 x64，使用系统自带的 .NET Framework，无需安装 Python。建议系统与显卡驱动保持更新。竖向任务栏等暂不支持的布局会保留托盘入口。仅在实际测试过的电脑上验证了行为；其他系统版本及显卡仍需实机验证。</p>
+<p>这是独立开发的小工具，当前分发包未进行商业代码签名。若 Windows 提示来源未知，请先核对你信任的分发来源及文件校验值；不要关闭系统安全功能。</p>
+<h2>字体与源代码</h2><p>界面中中文使用宋体（SimSun），英文和数字使用 Times New Roman。源代码、编译脚本和本机验证结果随项目目录另行保留；分发压缩包仅包含运行所需文件。</p>
+</html>

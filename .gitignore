@@ -1,0 +1,21 @@
+# Generated binaries and distribution archives
+/release/
+/validation/
+/bin/
+/obj/
+/.vs/
+*.exe
+*.dll
+*.pdb
+*.zip
+*.log
+*.tmp
+*.user
+
+# Local measurements, hardware identifiers and user settings
+/tools/*validation*.txt
+settings.json
+auth.json
+.env
+.env.*
+*.local.json
