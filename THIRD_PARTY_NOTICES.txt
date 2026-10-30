@@ -1,4 +1,4 @@
-Codex Taskbar Monitor 1.1
+Codex Taskbar Monitor 1.2
 
 This distribution contains the monitor executable and documentation only.
 It does not include OpenAI Codex, NVIDIA software, fonts, or their runtime files.

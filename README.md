@@ -1,25 +1,26 @@
 # Codex Taskbar Monitor
 
-在 Windows 任务栏右侧查看 CPU、内存、GPU 使用率，以及 Codex 额度的**已用百分比**。
+在 Windows 任务栏右侧查看 CPU、内存、GPU 使用率、实时下载／上传网速，以及 Codex 额度的**已用百分比**。
 
 [下载最新 Windows x64 免安装包](https://github.com/GuangyaoYin/codex-taskbar-monitor/releases/latest)
 
 浅色与深色界面。下图由程序绘制器生成，使用合成示例数据，不含私人账号信息。
 
-![浅色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度已用 48%](docs/images/monitor-light.png)
+![浅色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度已用 48%，右侧显示下载和上传网速](docs/images/monitor-light.png)
 
-![深色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度已用 48%](docs/images/monitor-dark.png)
+![深色示例：CPU 7%、内存 28%、GPU 12%、Codex 周额度已用 48%，右侧显示下载和上传网速](docs/images/monitor-dark.png)
 
 ## 功能
 
 - 上行显示 CPU、物理内存和选中 GPU 的使用率；支持切换 GPU。
+- 右侧双行显示下载、上传网速，每秒刷新并自动切换 B/s、KB/s、MB/s 等单位；悬停查看采集网卡。
 - 下行显示 Codex 返回的额度周期和已用比例，例如周额度或 5 小时额度。未返回的周期不会被补成 0%。
 - 悬停查看内存容量、GPU 名称与显存、额度重置时间及最后更新时间；时间按本机时区显示。
 - 独立浮窗贴靠主屏任务栏通知区左侧，可拖动并记住位置；保留托盘入口和右键菜单。
-- 正常情况下硬件每秒刷新，额度每两分钟刷新。读取失败时标记旧数据，并可手动重试。
+- 正常情况下硬件与网速每秒刷新，额度每两分钟刷新。临时额度查询失败时保留并标记旧数据，按 15、30、60、120 秒恢复重试，详情显示下一次重试时刻。
 - 开机启动默认关闭，可由用户自行开启。
 
-v1.1 使用等宽指标列、细线图标、进度条和圆角详情，随系统切换亮暗主题。中文使用宋体（SimSun），英文和数字使用 Times New Roman。
+v1.2 在等宽指标列、细线图标、进度条和圆角详情上增加了双向网速，随系统切换亮暗主题。中文使用宋体（SimSun），英文和数字使用 Times New Roman。
 
 ## 使用
 
@@ -40,6 +41,8 @@ v1.1 使用等宽指标列、细线图标、进度条和圆角详情，随系统
 
 设置保存在 `%LOCALAPPDATA%\CodexTaskbarMonitor\settings.json`，包括位置、GPU 选择和手动指定的 Codex 路径。额度只在本次运行内存中缓存。
 
+网速优先采集主联网物理接口，每次只统计一个接口，不将 VPN 与物理网卡重复相加；显示网卡层面的当前吞吐，包含协议开销。首次采样、切换接口或长时间暂停后重新建立基线，暂显示 `--`。
+
 ## 构建与验证
 
 在 Windows PowerShell 中运行：
@@ -48,18 +51,18 @@ v1.1 使用等宽指标列、细线图标、进度条和圆角详情，随系统
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-脚本使用系统的 .NET Framework x64 C# 编译器，生成 `release/CodexTaskbarMonitor-1.1.0-win-x64/` 和对应压缩包。代码使用 C# 5，无第三方 NuGet 依赖。
+脚本使用系统的 .NET Framework x64 C# 编译器，生成 `release/CodexTaskbarMonitor-1.2.0-win-x64/` 和对应压缩包。代码使用 C# 5，无第三方 NuGet 依赖。
 
 运行内置显示格式自检：
 
 ```powershell
-$check = Start-Process .\release\CodexTaskbarMonitor-1.1.0-win-x64\CodexTaskbarMonitor.exe `
+$check = Start-Process .\release\CodexTaskbarMonitor-1.2.0-win-x64\CodexTaskbarMonitor.exe `
     -ArgumentList '--self-test' -Wait -PassThru
 $check.ExitCode  # 0 表示通过
 ```
 
-[`tools/UiIntegrationProbe.cs`](tools/UiIntegrationProbe.cs) 提供独立 UI 集成验证，使用合成数据检查尺寸、DPI、位置边界、详情与刷新状态，并生成亮暗主题的绘制矩阵。v1.1 已通过 17 项检查及 24 组绘制场景。仓库示例图的生成代码见 [`docs/README-preview.cs`](docs/README-preview.cs)。
+[`tools/UiIntegrationProbe.cs`](tools/UiIntegrationProbe.cs) 提供独立 UI 集成验证，使用合成数据检查尺寸、DPI、位置边界、详情、刷新状态和网速单位，并生成亮暗主题的绘制矩阵。网速边界测试在 [`tools/NetworkProbe.cs`](tools/NetworkProbe.cs)，额度接口与兼容性测试在 [`tools/CodexProbe.cs`](tools/CodexProbe.cs)。仓库示例图的生成代码见 [`docs/README-preview.cs`](docs/README-preview.cs)。
 
 ## English
 
-A portable Windows 10/11 x64 utility for CPU, RAM, GPU usage and Codex quota **used percentages**. It shows a compact, theme-aware window beside the primary taskbar, with reset times in hover details and a tray menu. Codex quota reading requires your own official Codex installation and ChatGPT login; no CLI or credentials are bundled. Windows 10 support has been checked with simulated taskbar geometry and still needs validation on a physical Windows 10 machine.
+A portable Windows 10/11 x64 utility for CPU, RAM, GPU usage, live download/upload speed and Codex quota **used percentages**. It shows a compact, theme-aware window beside the primary taskbar, with reset times in hover details and a tray menu. Codex quota reading requires your own official Codex installation and ChatGPT login; no CLI or credentials are bundled. Windows 10 support has been checked with simulated taskbar geometry and still needs validation on a physical Windows 10 machine.

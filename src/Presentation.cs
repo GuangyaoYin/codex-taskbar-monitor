@@ -76,6 +76,17 @@ namespace CodexTaskbarMonitor
             return (value / 1073741824.0).ToString("0.0", CultureInfo.InvariantCulture) + " GiB";
         }
 
+        public static string Speed(double? bytesPerSecond)
+        {
+            if (!bytesPerSecond.HasValue || Double.IsNaN(bytesPerSecond.Value) ||
+                Double.IsInfinity(bytesPerSecond.Value) || bytesPerSecond.Value < 0) return "--";
+            string[] units = { "B/s", "KB/s", "MB/s", "GB/s", "TB/s" };
+            double value = bytesPerSecond.Value;
+            int unit = 0;
+            while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
+            return value.ToString(unit == 0 || value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture) + " " + units[unit];
+        }
+
         public static string WindowLabel(int minutes)
         {
             if (minutes == 10080) return "周";
@@ -112,7 +123,7 @@ namespace CodexTaskbarMonitor
             return "Codex 查询失败";
         }
 
-        public static List<string> Details(HardwareSnapshot hardware, GpuSnapshot gpu, CodexSnapshot codex, string placement)
+        public static List<string> Details(HardwareSnapshot hardware, GpuSnapshot gpu, CodexSnapshot codex, string placement, NetworkSnapshot network = null)
         {
             List<string> lines = new List<string>();
             lines.Add("任务栏状态条");
@@ -134,6 +145,14 @@ namespace CodexTaskbarMonitor
             }
             else lines.Add("GPU：暂不可用");
             lines.Add("");
+            if (network != null)
+            {
+                lines.Add("下载：" + Speed(network.DownloadBytesPerSecond));
+                lines.Add("上传：" + Speed(network.UploadBytesPerSecond));
+                if (!String.IsNullOrEmpty(network.InterfaceName)) lines.Add("网卡：" + network.InterfaceName);
+                if (!String.IsNullOrEmpty(network.StatusMessage)) lines.Add("网速状态：" + network.StatusMessage);
+                lines.Add("");
+            }
             if (codex == null) lines.Add("Codex：正在查询");
             else
             {
@@ -238,6 +257,8 @@ namespace CodexTaskbarMonitor
             return text.StartsWith("采集来源", StringComparison.Ordinal) ||
                 text.StartsWith("额度更新", StringComparison.Ordinal) ||
                 text.StartsWith("位置：", StringComparison.Ordinal) ||
+                text.StartsWith("自动重试：", StringComparison.Ordinal) ||
+                text.StartsWith("网速状态：", StringComparison.Ordinal) ||
                 text.StartsWith("拖动调整", StringComparison.Ordinal);
         }
 

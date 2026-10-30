@@ -16,7 +16,7 @@ public static class ReadmePreview
     {
         string root = args.Length > 0 ? Path.GetFullPath(args[0]) :
             Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), ".."));
-        string product = Path.Combine(root, "release", "CodexTaskbarMonitor-1.1.0-win-x64", "CodexTaskbarMonitor.exe");
+        string product = Path.Combine(root, "release", "CodexTaskbarMonitor-1.2.0-win-x64", "CodexTaskbarMonitor.exe");
         AppDomain.CurrentDomain.AssemblyResolve += delegate(object sender, ResolveEventArgs e)
         {
             return e.Name.StartsWith("CodexTaskbarMonitor,", StringComparison.Ordinal) ? Assembly.LoadFrom(product) : null;
@@ -35,14 +35,15 @@ public static class ReadmePreview
         QuotaBucket bucket = new QuotaBucket { Id = "codex", Name = "Codex" };
         bucket.Windows.Add(new QuotaWindow { UsedPercent = 48, WindowDurationMins = 10080 });
         quota.Buckets.Add(bucket);
+        NetworkSnapshot network = new NetworkSnapshot { DownloadBytesPerSecond = 1258291, UploadBytesPerSecond = 35840, InterfaceName = "Example adapter" };
         string output = Path.Combine(root, "docs", "images");
         Directory.CreateDirectory(output);
         foreach (bool dark in new bool[] { false, true })
         {
-            using (Bitmap bitmap = new Bitmap(480, 76))
+            using (Bitmap bitmap = new Bitmap(CompactPainter.PreferredWidthDip * 2, CompactPainter.PreferredHeightDip * 2))
             using (Graphics graphics = Graphics.FromImage(bitmap))
             {
-                CompactPainter.Draw(graphics, new Rectangle(Point.Empty, bitmap.Size), 2, dark, false, hardware, gpu, quota);
+                CompactPainter.Draw(graphics, new Rectangle(Point.Empty, bitmap.Size), 2, dark, false, hardware, gpu, quota, network);
                 string path = Path.Combine(output, dark ? "monitor-dark.png" : "monitor-light.png");
                 bitmap.Save(path, ImageFormat.Png);
                 Console.WriteLine(path);

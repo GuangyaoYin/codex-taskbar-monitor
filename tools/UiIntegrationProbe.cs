@@ -18,20 +18,26 @@ public static class UiIntegrationProbe
 {
     private static int failures;
     private static bool probeObservedWithFocus;
+    private static string reportDirectory;
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
 
     [STAThread]
     public static int Main(string[] args)
     {
-        string product = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
-            "..", "release", "CodexTaskbarMonitor-1.1.0-win-x64", "CodexTaskbarMonitor.exe"));
+        string projectRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), ".."));
+        string[] builds = Directory.GetDirectories(Path.Combine(projectRoot, "release"), "CodexTaskbarMonitor-*-win-x64");
+        Array.Sort(builds, delegate(string left, string right) { return Directory.GetLastWriteTimeUtc(right).CompareTo(Directory.GetLastWriteTimeUtc(left)); });
+        if (builds.Length == 0 && args.Length == 0) { Console.WriteLine("Build the product first or provide its EXE path."); return 98; }
+        string product = builds.Length > 0 ? Path.Combine(builds[0], "CodexTaskbarMonitor.exe") : String.Empty;
         if (args.Length > 0) product = Path.GetFullPath(args[0]);
         AppDomain.CurrentDomain.AssemblyResolve += delegate(object sender, ResolveEventArgs e)
         {
             return e.Name.StartsWith("CodexTaskbarMonitor,", StringComparison.Ordinal) ? Assembly.LoadFrom(product) : null;
         };
-        Assembly.LoadFrom(product);
+        Assembly productAssembly = Assembly.LoadFrom(product);
+        Version version = productAssembly.GetName().Version;
+        reportDirectory = Path.Combine(projectRoot, "validation", "v" + version.Major + "." + version.Minor);
         Console.WriteLine("Product=" + product);
         using (SHA256 sha = SHA256.Create())
         using (FileStream stream = File.OpenRead(product))
@@ -65,7 +71,9 @@ public static class UiIntegrationProbe
             settings.ManualY = null;
             HardwareSnapshot hardware = MakeHardware();
             CodexSnapshot quota = MakeQuota(1);
-            form.SetPreviewData(hardware, quota);
+            NetworkSnapshot network = new NetworkSnapshot { DownloadBytesPerSecond = 12.5 * 1048576, UploadBytesPerSecond = 1.2 * 1048576,
+                InterfaceName = "Synthetic Ethernet", StatusMessage = "Synthetic UI integration sample" };
+            form.SetPreviewData(hardware, quota, network);
 
             // Emulate Win10's standard 40-physical-pixel taskbar at 100% DPI.
             // This is geometry integration, not a claim of running Windows 10.
@@ -75,7 +83,8 @@ public static class UiIntegrationProbe
                 TaskbarBounds = new Rectangle(screen.Left, screen.Bottom - 40, screen.Width, 40),
                 SafeArea = win10Safe, ShouldHide = false, Dpi = 96, Reason = "Synthetic Windows 10 40px taskbar"
             });
-            Check("Win10 40px geometry fits 240x38", form.Visible && form.Size == new Size(240, 38) && win10Safe.Contains(form.Bounds));
+            Check("Win10 40px geometry fits preferred width and 38px height", form.Visible &&
+                form.Size == new Size(CompactPainter.PreferredWidthDip, CompactPainter.PreferredHeightDip) && win10Safe.Contains(form.Bounds));
             Console.WriteLine("Win10SyntheticBounds=" + form.Bounds);
 
             Point clampedTopLeft = (Point)Invoke(form, "Clamp", new Point(screen.Left - 1000, screen.Top - 1000), win10Safe);
@@ -91,7 +100,7 @@ public static class UiIntegrationProbe
             settings.ManualX = null;
             settings.ManualY = null;
 
-            Apply(form, new TaskbarPlacement { SafeArea = new Rectangle(win10Safe.Left, win10Safe.Top, 239, 38), Dpi = 96, Reason = "No space" });
+            Apply(form, new TaskbarPlacement { SafeArea = new Rectangle(win10Safe.Left, win10Safe.Top, CompactPainter.PreferredWidthDip - 1, 38), Dpi = 96, Reason = "No space" });
             Check("Insufficient width collapses main window", !form.Visible);
             Invoke(form, "ShowDetails", new Point(screen.Right - 50, screen.Bottom - 20), true);
             Check("Tray can open details while main is collapsed", details.Visible && screen.Contains(details.Bounds));
@@ -105,10 +114,16 @@ public static class UiIntegrationProbe
 
             Apply(form, new TaskbarPlacement { SafeArea = win10Safe, Dpi = 96, Reason = "Safe" });
             Invoke(form, "ShowDetails", form.Location, false);
+            List<string> detailContent = (List<string>)Invoke(form, "BuildDetails");
+            Check("Network details expose both directions and selected interface", detailContent.Exists(delegate(string line) { return line.StartsWith("下载：", StringComparison.Ordinal); }) &&
+                detailContent.Exists(delegate(string line) { return line.StartsWith("上传：", StringComparison.Ordinal); }) &&
+                detailContent.Exists(delegate(string line) { return line.Contains("Synthetic Ethernet"); }));
             int oldHeight = details.Height;
             SetField(form, "quota", MakeQuota(4));
             Invoke(form, "UpdateView");
-            Check("Growing details stay inside primary screen", details.Height > oldHeight && screen.Contains(details.Bounds));
+            bool growingDetailsFit = details.Height > oldHeight && screen.Contains(details.Bounds);
+            bool retryDetailsFit = VerifyRetryDetails(form);
+            Check("Growing and retry-state details remain readable inside their layout", growingDetailsFit && retryDetailsFit);
             Console.WriteLine("DetailsGrowth=" + oldHeight + "->" + details.Height + "; bounds=" + details.Bounds);
 
             Apply(form, new TaskbarPlacement { ShouldHide = true, Dpi = 96, Reason = "Taskbar hidden" });
@@ -122,8 +137,8 @@ public static class UiIntegrationProbe
             {
                 Apply(form, real);
                 Check("Current physical-DPI placement fits safe gap", form.Visible && real.SafeArea.Contains(form.Bounds) &&
-                    form.Width == (int)(240 * Math.Max(1, real.Dpi / 96.0f)) &&
-                    form.Height == (int)(38 * Math.Max(1, real.Dpi / 96.0f)));
+                    form.Width == (int)(CompactPainter.PreferredWidthDip * Math.Max(1, real.Dpi / 96.0f)) &&
+                    form.Height == (int)(CompactPainter.PreferredHeightDip * Math.Max(1, real.Dpi / 96.0f)));
             }
             else Console.WriteLine("SKIP actual placement: " + real.Reason);
 
@@ -142,10 +157,12 @@ public static class UiIntegrationProbe
                 SizeF topSize = MixedText.Measure(graphics, top, 12.5f);
                 SizeF bottomSize = MixedText.Measure(graphics, bottom, 12.5f);
                 Check("Configured font families exist", chinese.FontFamily.GetName(0x0409) == "SimSun" && western.FontFamily.GetName(0x0409) == "Times New Roman");
-                Check("Worst-case rows fit 240x38 geometry", topSize.Width + 16 <= 240 && bottomSize.Width + 16 <= 240 &&
+                Check("Original hardware and quota rows still fit their 240x38 panel", topSize.Width + 16 <= 240 && bottomSize.Width + 16 <= 240 &&
                     3 + topSize.Height <= 21 && 21 + bottomSize.Height <= 38);
                 form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
                 Check("Both rows contain rendered text pixels", Ink(bitmap, new Rectangle(5, 2, 230, 17)) > 15 && Ink(bitmap, new Rectangle(5, 20, 230, 16)) > 15);
+                Check("Main form passes sampled network values to both painted rows", Ink(bitmap, new Rectangle(266, 1, 70, 16)) > 5 &&
+                    Ink(bitmap, new Rectangle(266, 21, 70, 15)) > 5);
                 Console.WriteLine("TextMetrics top=" + topSize + "; bottom=" + bottomSize + "; fonts=" + chinese.FontFamily.Name + "," + western.FontFamily.Name);
             }
 
@@ -177,13 +194,80 @@ public static class UiIntegrationProbe
         return failures == 0 ? 0 : 1;
     }
 
+    private static bool VerifyRetryDetails(MonitorForm form)
+    {
+        object originalQuota = Field(form, "quota");
+        object originalNext = Field(form, "nextQuota");
+        object originalBusy = Field(form, "quotaBusy");
+        bool fits = true;
+        int cases = 0;
+        Directory.CreateDirectory(reportDirectory);
+        try
+        {
+            CodexSnapshot failed = MakeQuota(1);
+            failed.Status = CodexStatus.Error;
+            failed.IsStale = true;
+            failed.StatusMessage = "额度查询超时；已保留最后一次成功数据。";
+            SetField(form, "quota", failed);
+            SetField(form, "nextQuota", DateTime.UtcNow.AddSeconds(30));
+            foreach (bool querying in new bool[] { false, true })
+            {
+                SetField(form, "quotaBusy", querying ? 1 : 0);
+                List<string> content = (List<string>)Invoke(form, "BuildDetails");
+                fits &= content.Exists(delegate(string line) { return querying ? line == "额度查询：正在重新查询" : line.StartsWith("自动重试：", StringComparison.Ordinal); });
+                foreach (int dpi in new int[] { 96, 144 })
+                    foreach (bool dark in new bool[] { false, true })
+                    {
+                        float s = dpi / 96.0f;
+                        using (DetailsWindow preview = new DetailsWindow())
+                        {
+                            preview.Opacity = 0;
+                            preview.UpdateContent(content, s, dark);
+                            using (Bitmap bitmap = new Bitmap(preview.Width, preview.Height))
+                            using (Graphics graphics = Graphics.FromImage(bitmap))
+                            {
+                                float valueColumn = (float)Field(preview, "labelWidth");
+                                foreach (object row in (System.Collections.IEnumerable)Field(preview, "lines"))
+                                {
+                                    if ((bool)Field(row, "Divider")) continue;
+                                    bool secondary = (bool)Field(row, "Secondary");
+                                    bool column = (bool)Field(row, "ValueColumn");
+                                    string label = (string)Field(row, "Label");
+                                    string value = (string)Field(row, "Value");
+                                    float font = (secondary ? 11.5f : 13) * s;
+                                    SizeF valueSize = MixedText.Measure(graphics, value, font);
+                                    fits &= 14 * s + (column ? valueColumn : 0) + valueSize.Width <= preview.Width - 13 * s;
+                                    fits &= valueSize.Height <= (float)Field(row, "Height");
+                                    if (!String.IsNullOrEmpty(label)) fits &= MixedText.Measure(graphics, label, font).Width + 2 * s <= valueColumn;
+                                }
+                                preview.DrawToBitmap(bitmap, new Rectangle(Point.Empty, preview.Size));
+                                fits &= ClearEdges(bitmap, MonitorPalette.For(dark).HoverSurface, Math.Max(1, (int)(2 * s)));
+                                if (dpi == 144)
+                                    bitmap.Save(Path.Combine(reportDirectory, "qa-details-" + (querying ? "requery" : "retry") + (dark ? "-dark.png" : "-light.png")),
+                                        System.Drawing.Imaging.ImageFormat.Png);
+                            }
+                        }
+                        cases++;
+                    }
+            }
+        }
+        finally
+        {
+            SetField(form, "quota", originalQuota);
+            SetField(form, "nextQuota", originalNext);
+            SetField(form, "quotaBusy", originalBusy);
+        }
+        Console.WriteLine("RetryDetailsCases=" + cases + "; LabelsAndValuesFit=" + fits);
+        return fits;
+    }
+
     private static void RunPainterMatrix()
     {
-        string output = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "..", "validation", "v1.1"));
+        string output = reportDirectory;
         Directory.CreateDirectory(output);
-        string[] states = { "single", "dual", "unknown", "stale-dual", "missing", "loading" };
-        int cellWidth = 380, cellHeight = 85;
-        using (Bitmap sheet = new Bitmap(cellWidth * 3, cellHeight * 8))
+        string[] states = { "single", "dual", "unknown", "stale-dual", "missing", "loading", "net-zero", "net-fast" };
+        int cellWidth = 540, cellHeight = 85;
+        using (Bitmap sheet = new Bitmap(cellWidth * 2, cellHeight * 16))
         using (Graphics grid = Graphics.FromImage(sheet))
         using (Font captionFont = new Font("Times New Roman", 12, FontStyle.Regular, GraphicsUnit.Pixel))
         using (Brush captionBrush = new SolidBrush(Color.FromArgb(35, 40, 48)))
@@ -193,7 +277,11 @@ public static class UiIntegrationProbe
             bool allEdgesClear = true;
             bool allRowsPainted = true;
             bool allMetricGaps = true;
+            bool allNetworkRowsPainted = true;
+            bool allNetworkGaps = true;
+            bool legacyPanelUnchanged = true;
             float smallestGap = Single.MaxValue;
+            float smallestNetworkGap = Single.MaxValue;
             foreach (int dpi in new int[] { 96, 144 })
                 foreach (bool dark in new bool[] { false, true })
                     foreach (string state in states)
@@ -201,46 +289,83 @@ public static class UiIntegrationProbe
                         float s = dpi / 96.0f;
                         HardwareSnapshot hardware = MakeHardware();
                         CodexSnapshot quota = MakeQuota(1);
+                        NetworkSnapshot network = new NetworkSnapshot { DownloadBytesPerSecond = 12.5 * 1048576, UploadBytesPerSecond = 1.2 * 1048576 };
                         if (state == "single") quota.Buckets[0].Windows.RemoveAt(0);
                         if (state == "unknown")
                         {
                             hardware.CpuPercent = null; hardware.MemoryPercent = null; hardware.Gpus[0].UtilizationPercent = null;
                             quota.Buckets.Clear();
+                            network.DownloadBytesPerSecond = null; network.UploadBytesPerSecond = null;
                         }
                         if (state == "stale-dual") { quota.IsStale = true; quota.Status = CodexStatus.Error; }
                         if (state == "missing") { quota.Buckets.Clear(); quota.Status = CodexStatus.Missing; }
-                        if (state == "loading") { quota = null; hardware = null; }
-                        using (Bitmap bitmap = new Bitmap((int)(240 * s), (int)(38 * s)))
+                        if (state == "loading") { quota = null; hardware = null; network = null; }
+                        if (state == "net-zero") { network.DownloadBytesPerSecond = 0; network.UploadBytesPerSecond = 0; }
+                        if (state == "net-fast") { network.DownloadBytesPerSecond = 1024.0 * 1048576; network.UploadBytesPerSecond = 1023.95 * 1048576; }
+                        using (Bitmap bitmap = new Bitmap((int)(CompactPainter.PreferredWidthDip * s), (int)(CompactPainter.PreferredHeightDip * s)))
                         using (Graphics graphics = Graphics.FromImage(bitmap))
                         {
                             GpuSnapshot gpu = hardware != null && hardware.Gpus.Count > 0 ? hardware.Gpus[0] : null;
-                            CompactPainter.Draw(graphics, new Rectangle(Point.Empty, bitmap.Size), s, dark, false, hardware, gpu, quota);
+                            CompactPainter.Draw(graphics, new Rectangle(Point.Empty, bitmap.Size), s, dark, false, hardware, gpu, quota, network);
                             Color background = MonitorPalette.For(dark).Surface;
                             bool edges = ClearEdges(bitmap, background, Math.Max(1, (int)(2 * s)));
                             bool rows = Ink(bitmap, new Rectangle((int)(4 * s), (int)(2 * s), (int)(232 * s), (int)(17 * s))) > 30 &&
                                 Ink(bitmap, new Rectangle((int)(4 * s), (int)(20 * s), (int)(232 * s), (int)(16 * s))) > 20;
                             allEdgesClear &= edges;
                             allRowsPainted &= rows;
+                            allNetworkRowsPainted &= Ink(bitmap, new Rectangle((int)(266 * s), (int)(1 * s), (int)(70 * s), (int)(16 * s))) > 5 &&
+                                Ink(bitmap, new Rectangle((int)(266 * s), (int)(21 * s), (int)(70 * s), (int)(15 * s))) > 5;
+                            string[] speeds = { DisplayText.Speed(network == null ? null : network.DownloadBytesPerSecond),
+                                DisplayText.Speed(network == null ? null : network.UploadBytesPerSecond), "1024 MB/s" };
+                            foreach (string speed in speeds)
+                            {
+                                float networkGap = 74 * s - MixedText.Measure(graphics, speed, 11.5f * s).Width;
+                                smallestNetworkGap = Math.Min(smallestNetworkGap, networkGap / s);
+                                allNetworkGaps &= networkGap >= 4 * s;
+                            }
+                            using (Bitmap legacy = new Bitmap((int)(240 * s), (int)(38 * s)))
+                            using (Graphics legacyGraphics = Graphics.FromImage(legacy))
+                            {
+                                CompactPainter.Draw(legacyGraphics, new Rectangle(Point.Empty, legacy.Size), s, dark, false, hardware, gpu, quota);
+                                legacyPanelUnchanged &= SamePixels(bitmap, legacy);
+                            }
                             // Label starts at x+12; the right-aligned value ends at
                             // x+70. Measure its actual bold face, as the painter does.
                             float gap = 58 * s - MixedText.Measure(graphics, "RAM", 10 * s).Width - BoldWidth(graphics, "100%", 12.5f * s);
                             smallestGap = Math.Min(smallestGap, gap / s);
                             allMetricGaps &= gap >= 3.5f * s;
-                            int column = frame % 3, row = frame / 3;
+                            int column = frame % 2, row = frame / 2;
                             grid.DrawString(dpi + " DPI / " + (dark ? "dark" : "light") + " / " + state, captionFont, captionBrush,
                                 column * cellWidth + 10, row * cellHeight + 4);
                             grid.DrawImageUnscaled(bitmap, column * cellWidth + 10, row * cellHeight + 23);
                             frame++;
                         }
                     }
-            Check("CompactPainter 24-case matrix leaves all outer edges clear", allEdgesClear);
-            Check("CompactPainter 24-case matrix paints both rows", allRowsPainted);
+            Check("CompactPainter 32-case matrix leaves all outer edges clear", allEdgesClear);
+            Check("CompactPainter 32-case matrix paints both original rows", allRowsPainted);
             Check("Worst-case metric labels and bold values keep readable separation", allMetricGaps);
+            Check("Network download and upload both paint independently of Codex state", allNetworkRowsPainted);
+            Check("Network value and arrow retain at least 4DIP separation", allNetworkGaps);
+            Check("Original 240DIP panel remains pixel-identical in wide and legacy draws", legacyPanelUnchanged);
+            Check("Network unknown and invalid values are not reported as measured zero", DisplayText.Speed(null) == "--" &&
+                DisplayText.Speed(Double.NaN) == "--" && DisplayText.Speed(Double.PositiveInfinity) == "--" && DisplayText.Speed(-1) == "--");
+            Check("Network formatter scales numeric values into B KB MB and GB per second", DisplayText.Speed(0) == "0 B/s" &&
+                DisplayText.Speed(1023) == "1023 B/s" && DisplayText.Speed(1024) == "1.0 KB/s" &&
+                DisplayText.Speed(1048576) == "1.0 MB/s" && DisplayText.Speed(1073741824) == "1.0 GB/s");
             Console.WriteLine("SmallestMetricGapDIP=" + smallestGap.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
+            Console.WriteLine("SmallestNetworkGapDIP=" + smallestNetworkGap.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture));
             string path = Path.Combine(output, "qa-compact-matrix.png");
             sheet.Save(path, System.Drawing.Imaging.ImageFormat.Png);
             Console.WriteLine("PainterMatrix=" + path);
         }
+    }
+
+    private static bool SamePixels(Bitmap wide, Bitmap legacy)
+    {
+        for (int y = 0; y < legacy.Height; y++)
+            for (int x = 0; x < legacy.Width; x++)
+                if (wide.GetPixel(x, y).ToArgb() != legacy.GetPixel(x, y).ToArgb()) return false;
+        return true;
     }
 
     private static float BoldWidth(Graphics graphics, string text, float size)
@@ -314,7 +439,7 @@ public static class UiIntegrationProbe
     }
     private static object Field(object instance, string name)
     {
-        return instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(instance);
+        return instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(instance);
     }
     private static void SetField(object instance, string name, object value)
     {

@@ -48,12 +48,16 @@ namespace CodexTaskbarMonitor
         {
             Directory.CreateDirectory(directory);
             using (HardwareSampler hardware = new HardwareSampler())
+            using (NetworkSampler net = new NetworkSampler())
             using (CodexQuotaClient quota = new CodexQuotaClient())
             using (MonitorForm form = new MonitorForm(false))
             {
                 hardware.Sample();
+                net.Sample();
                 Thread.Sleep(1050);
-                form.SetPreviewData(hardware.Sample(), quota.Read(null));
+                HardwareSnapshot h = hardware.Sample();
+                NetworkSnapshot n = net.Sample();
+                form.SetPreviewData(h, quota.Read(null), n);
                 form.SavePreview(directory);
             }
             return 0;
@@ -64,12 +68,14 @@ namespace CodexTaskbarMonitor
     {
         private readonly AppSettings settings;
         private readonly HardwareSampler sampler;
+        private readonly NetworkSampler networkSampler;
         private readonly CodexQuotaClient quotaClient;
         private readonly NotifyIcon tray;
         private readonly ContextMenuStrip menu;
         private readonly DetailsWindow details;
         private readonly System.Windows.Forms.Timer timer;
         private HardwareSnapshot hardware;
+        private NetworkSnapshot network;
         private CodexSnapshot quota;
         private TaskbarPlacement placement;
         private int hardwareBusy;
@@ -110,6 +116,7 @@ namespace CodexTaskbarMonitor
             interactive = runInteractive;
             settings = AppSettings.Load();
             sampler = new HardwareSampler();
+            networkSampler = new NetworkSampler();
             quotaClient = new CodexQuotaClient();
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
@@ -117,7 +124,7 @@ namespace CodexTaskbarMonitor
             StartPosition = FormStartPosition.Manual;
             AutoScaleMode = AutoScaleMode.None;
             DoubleBuffered = true;
-            Width = 240; Height = 38;
+            Width = CompactPainter.PreferredWidthDip; Height = CompactPainter.PreferredHeightDip;
             Text = "任务栏状态条";
             Icon = SystemIcons.Application;
             dark = AppSettings.DarkTheme();
@@ -184,8 +191,12 @@ namespace CodexTaskbarMonitor
                     HardwareSnapshot result;
                     try { result = sampler.Sample(); }
                     catch { result = new HardwareSnapshot { TimestampUtc = DateTime.UtcNow, Error = "硬件采集暂不可用" }; }
-                    Post(delegate { hardware = result; UpdateView(); });
+                    NetworkSnapshot networkResult;
+                    try { networkResult = networkSampler.Sample(); }
+                    catch { networkResult = new NetworkSnapshot { TimestampUtc = DateTime.UtcNow, StatusMessage = "网速暂不可用" }; }
+                    Post(delegate { hardware = result; network = networkResult; UpdateView(); });
                     Interlocked.Exchange(ref hardwareBusy, 0);
+                    if (shuttingDown) { sampler.Dispose(); networkSampler.Dispose(); }
                 });
             }
             if (now >= nextPlacement && Interlocked.CompareExchange(ref placementBusy, 1, 0) == 0)
@@ -225,8 +236,12 @@ namespace CodexTaskbarMonitor
                 Post(delegate
                 {
                     quota = result;
-                    quotaFailures = result.Status == CodexStatus.Ready ? 0 : Math.Min(3, quotaFailures + 1);
-                    nextQuota = DateTime.UtcNow.AddMinutes(result.Status == CodexStatus.Ready ? 2 : Math.Min(15, 2 * Math.Pow(2, quotaFailures - 1)));
+                    quotaFailures = result.Status == CodexStatus.Error ? Math.Min(4, quotaFailures + 1) : 0;
+                    // Recover promptly from a transient timeout instead of leaving
+                    // a stale snapshot untouched for the previous 2/4/8 minutes.
+                    nextQuota = result.Status == CodexStatus.Error
+                        ? DateTime.UtcNow.AddSeconds(Math.Min(120, 15 * Math.Pow(2, quotaFailures - 1)))
+                        : DateTime.UtcNow.AddMinutes(2);
                     UpdateView();
                 });
                 Interlocked.Exchange(ref quotaBusy, 0);
@@ -246,11 +261,11 @@ namespace CodexTaskbarMonitor
         private void UpdateView()
         {
             GpuSnapshot gpu = SelectedGpu();
-            string status = "CPU " + DisplayText.Percent(hardware == null ? null : hardware.CpuPercent) + "  RAM " + DisplayText.Percent(hardware == null ? null : hardware.MemoryPercent) + "  GPU " + DisplayText.Percent(gpu == null ? null : gpu.UtilizationPercent) + " | " + DisplayText.CompactQuota(quota);
+            string status = "CPU " + DisplayText.Percent(hardware == null ? null : hardware.CpuPercent) + "  RAM " + DisplayText.Percent(hardware == null ? null : hardware.MemoryPercent) + "  GPU " + DisplayText.Percent(gpu == null ? null : gpu.UtilizationPercent) + " | ↓ " + DisplayText.Speed(network == null ? null : network.DownloadBytesPerSecond) + " ↑ " + DisplayText.Speed(network == null ? null : network.UploadBytesPerSecond);
             tray.Text = status.Length > 63 ? status.Substring(0, 63) : status;
             if (details.Visible && DateTime.UtcNow >= noticeUntil)
             {
-                details.UpdateContent(DisplayText.Details(hardware, gpu, quota, positionState), scale, dark);
+                details.UpdateContent(BuildDetails(), scale, dark);
                 PositionDetails();
             }
             Invalidate();
@@ -261,7 +276,7 @@ namespace CodexTaskbarMonitor
             placement = result;
             scale = Math.Max(1, result.Dpi / 96.0f);
             dark = AppSettings.DarkTheme();
-            Size target = new Size((int)(240 * scale), (int)(38 * scale));
+            Size target = new Size((int)(CompactPainter.PreferredWidthDip * scale), (int)(CompactPainter.PreferredHeightDip * scale));
             Size = target;
             positionState = result.Reason;
             if (result.ShouldHide || result.SafeArea.Width < Width || result.SafeArea.Height < Height)
@@ -325,7 +340,7 @@ namespace CodexTaskbarMonitor
             noticeUntil = DateTime.MinValue;
             detailsAnchor = anchor;
             detailsFromTray = fromTray;
-            details.UpdateContent(DisplayText.Details(hardware, SelectedGpu(), quota, positionState), scale, dark);
+            details.UpdateContent(BuildDetails(), scale, dark);
             PositionDetails();
             detailsUntil = DateTime.UtcNow.AddSeconds(fromTray ? 5 : 1);
             if (!details.Visible) details.Show();
@@ -338,6 +353,19 @@ namespace CodexTaskbarMonitor
             int y = detailsFromTray ? detailsAnchor.Y - details.Height - (int)(12 * scale) : Top - details.Height - (int)(6 * scale);
             if (y < screen.Top) y = (detailsFromTray ? detailsAnchor.Y : Bottom) + (int)(6 * scale);
             details.Location = new Point(Math.Max(screen.Left, Math.Min(screen.Right - details.Width, x)), Math.Max(screen.Top, Math.Min(screen.Bottom - details.Height, y)));
+        }
+
+        private List<string> BuildDetails()
+        {
+            List<string> content = DisplayText.Details(hardware, SelectedGpu(), quota, positionState, network);
+            if (quota != null && quota.Status == CodexStatus.Error && nextQuota != DateTime.MinValue)
+            {
+                int insert = content.FindIndex(delegate(string line) { return line.StartsWith("额度更新：", StringComparison.Ordinal); });
+                content.Insert(insert < 0 ? Math.Max(1, content.Count - 2) : insert + 1,
+                    Interlocked.CompareExchange(ref quotaBusy, 0, 0) != 0 ? "额度查询：正在重新查询"
+                    : "自动重试：" + nextQuota.ToLocalTime().ToString("HH:mm:ss"));
+            }
+            return content;
         }
 
         private void RebuildMenu()
@@ -432,7 +460,7 @@ namespace CodexTaskbarMonitor
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            CompactPainter.Draw(e.Graphics,ClientRectangle,scale,dark,hovered,hardware,SelectedGpu(),quota);
+            CompactPainter.Draw(e.Graphics,ClientRectangle,scale,dark,hovered,hardware,SelectedGpu(),quota,network);
         }
 
         protected override void OnSizeChanged(EventArgs e)
@@ -447,9 +475,10 @@ namespace CodexTaskbarMonitor
             }
         }
 
-        public void SetPreviewData(HardwareSnapshot h, CodexSnapshot q)
+        public void SetPreviewData(HardwareSnapshot h, CodexSnapshot q, NetworkSnapshot n = null)
         {
-            hardware = h; quota = q; scale = 1.5f; Width = 360; Height = 57;
+            hardware = h; quota = q; network = n; scale = 1.5f;
+            Width = (int)(CompactPainter.PreferredWidthDip * scale); Height = (int)(CompactPainter.PreferredHeightDip * scale);
             positionState = "通知区左侧空白";
         }
         public void SavePreview(string directory)
@@ -463,7 +492,7 @@ namespace CodexTaskbarMonitor
                     DrawToBitmap(bitmap, new Rectangle(Point.Empty, Size));
                     bitmap.Save(Path.Combine(directory, theme ? "monitor-dark.png" : "monitor-light.png"));
                 }
-                details.UpdateContent(DisplayText.Details(hardware, SelectedGpu(), quota, positionState), scale, dark);
+                details.UpdateContent(BuildDetails(), scale, dark);
                 IntPtr other = details.Handle;
                 using (Bitmap bitmap = new Bitmap(details.Width, details.Height))
                 {
@@ -492,7 +521,7 @@ namespace CodexTaskbarMonitor
                 Icon ownedIcon = tray.Icon;
                 tray.Dispose(); if (ownedIcon != null) ownedIcon.Dispose();
                 menu.Dispose(); details.Dispose(); quotaClient.Dispose();
-                if (Interlocked.CompareExchange(ref hardwareBusy, 0, 0) == 0) sampler.Dispose();
+                if (Interlocked.CompareExchange(ref hardwareBusy, 0, 0) == 0) { sampler.Dispose(); networkSampler.Dispose(); }
             }
             base.Dispose(disposing);
         }

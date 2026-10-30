@@ -144,7 +144,10 @@ namespace CodexTaskbarMonitor
 
     public static class CompactPainter
     {
-        public static void Draw(Graphics g,Rectangle bounds,float s,bool dark,bool hover,HardwareSnapshot hardware,GpuSnapshot gpu,CodexSnapshot quota)
+        public const int PreferredWidthDip = 344;
+        public const int PreferredHeightDip = 38;
+
+        public static void Draw(Graphics g,Rectangle bounds,float s,bool dark,bool hover,HardwareSnapshot hardware,GpuSnapshot gpu,CodexSnapshot quota,NetworkSnapshot network=null)
         {
             MonitorPalette p=MonitorPalette.For(dark);
             g.Clear(hover?p.HoverSurface:p.Surface);
@@ -153,6 +156,9 @@ namespace CodexTaskbarMonitor
             Metric(g,0,"CPU",hardware==null?null:hardware.CpuPercent,8*s,s,p);
             Metric(g,1,"RAM",hardware==null?null:hardware.MemoryPercent,84*s,s,p);
             Metric(g,2,"GPU",gpu==null?null:gpu.UtilizationPercent,160*s,s,p);
+            // Keep the original 240-DIP panel intact for compact callers; the
+            // live window appends two network rows without changing its height.
+            if(bounds.Width>=320*s) Network(g,network,s,p);
             VisualStyle.Icon(g,3,8*s,25*s,8*s,p.Accent,s);
             MixedText.Draw(g,"Codex",11.5f*s,p.Foreground,21*s,22*s,true);
             QuotaBucket bucket=DisplayText.MainBucket(quota);
@@ -200,6 +206,32 @@ namespace CodexTaskbarMonitor
             MixedText.Draw(g,label,10*s,p.Muted,x+12*s,2.5f*s,false);
             VisualStyle.RightText(g,DisplayText.Percent(value),12.5f*s,p.Foreground,x+70*s,1*s,true);
             VisualStyle.Progress(g,new RectangleF(x+12*s,16*s,58*s,1.5f*s),value,p.Track,p.Hardware);
+        }
+
+        private static void Network(Graphics g,NetworkSnapshot network,float s,MonitorPalette p)
+        {
+            using(Pen divider=new Pen(p.Divider,Math.Max(1,0.65f*s)))
+                g.DrawLine(divider,244*s,4*s,244*s,34*s);
+            double? download=network==null?null:network.DownloadBytesPerSecond;
+            double? upload=network==null?null:network.UploadBytesPerSecond;
+            TransferArrow(g,true,254*s,5*s,8*s,p.Muted,s);
+            TransferArrow(g,false,254*s,25*s,8*s,p.Muted,s);
+            VisualStyle.RightText(g,DisplayText.Speed(download),11.5f*s,download.HasValue?p.Foreground:p.Muted,336*s,1*s,false);
+            VisualStyle.RightText(g,DisplayText.Speed(upload),11.5f*s,upload.HasValue?p.Foreground:p.Muted,336*s,21*s,false);
+        }
+
+        private static void TransferArrow(Graphics g,bool download,float x,float y,float size,Color color,float scale)
+        {
+            using(Pen pen=new Pen(color,Math.Max(1,0.9f*scale)))
+            {
+                pen.StartCap=LineCap.Round;pen.EndCap=LineCap.Round;pen.LineJoin=LineJoin.Round;
+                float center=x+size*0.5f;
+                float head=download?y+size:y;
+                float tail=download?y:y+size;
+                float shoulder=download?y+size*0.58f:y+size*0.42f;
+                g.DrawLine(pen,center,tail,center,head);
+                g.DrawLines(pen,new PointF[]{new PointF(x+size*0.1f,shoulder),new PointF(center,head),new PointF(x+size*0.9f,shoulder)});
+            }
         }
     }
 }

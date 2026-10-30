@@ -16,17 +16,21 @@ namespace CodexTaskbarMonitor
     public sealed class CodexQuotaClient : IDisposable
     {
         private const int ReadTimeoutMilliseconds = 18000;
+        private const int InitializeTimeoutMilliseconds = 5000;
         private readonly object readGate = new object();
         private readonly object processGate = new object();
         private volatile bool disposed;
         private RpcProcess activeProcess;
         private List<QuotaBucket> lastBuckets = new List<QuotaBucket>();
         private DateTime? lastSuccessUtc;
+        private string legacyParamsPath;
+        internal string LastDiagnostics { get; private set; }
 
         public CodexSnapshot Read(string customPath)
         {
             lock (readGate)
             {
+                LastDiagnostics = "phase=discovery;attempts=0";
                 CodexSnapshot snapshot = new CodexSnapshot();
                 snapshot.AttemptUtc = DateTime.UtcNow;
                 snapshot.LastSuccessUtc = lastSuccessUtc;
@@ -41,56 +45,114 @@ namespace CodexTaskbarMonitor
                         ? "未找到 Codex CLI；可查看官方安装说明或手动选择路径。"
                         : "所选 Codex CLI 路径不存在或不是可用的 exe 文件。");
 
-                RpcProcess rpc = null;
-                try
+                DateTime deadlineUtc = DateTime.UtcNow.AddMilliseconds(ReadTimeoutMilliseconds);
+                for (int attempt = 1; attempt <= 2; attempt++)
                 {
-                    DateTime deadlineUtc = DateTime.UtcNow.AddMilliseconds(ReadTimeoutMilliseconds);
-                    rpc = new RpcProcess(snapshot.CliPath);
-                    lock (processGate)
+                    RpcProcess rpc = null;
+                    string phase = "launch";
+                    long launchMs = 0, initializeMs = 0, quotaMs = 0;
+                    Stopwatch phaseWatch = Stopwatch.StartNew();
+                    bool retry = false;
+                    try
                     {
-                        if (disposed)
-                            throw new QuotaException(CodexStatus.Error, "额度读取模块已关闭。");
-                        activeProcess = rpc;
-                    }
-                    rpc.Send("{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex_taskbar_monitor\",\"title\":\"Codex Taskbar Monitor\",\"version\":\"0.1.0\"}}}");
-                    rpc.ReceiveResult(1, deadlineUtc);
-                    rpc.Send("{\"method\":\"initialized\",\"params\":{}}");
-                    rpc.Send("{\"method\":\"account/rateLimits/read\",\"id\":2}");
-                    Dictionary<string, object> result = rpc.ReceiveResult(2, deadlineUtc);
-                    List<QuotaBucket> buckets = ParseBuckets(result);
-                    if (buckets.Count == 0)
-                        throw new QuotaException(CodexStatus.Error, "账户未返回可用额度窗口；请稍后重试。");
+                        rpc = new RpcProcess(snapshot.CliPath);
+                        launchMs = phaseWatch.ElapsedMilliseconds;
+                        lock (processGate)
+                        {
+                            if (disposed)
+                                throw new QuotaException(CodexStatus.Error, "额度读取模块已关闭。");
+                            activeProcess = rpc;
+                        }
+                        phase = "initialize";
+                        phaseWatch.Restart();
+                        rpc.Send("{\"method\":\"initialize\",\"id\":1,\"params\":{\"clientInfo\":{\"name\":\"codex_taskbar_monitor\",\"title\":\"Codex Taskbar Monitor\",\"version\":\"0.1.0\"}}}");
+                        DateTime initializationDeadline = DateTime.UtcNow.AddMilliseconds(InitializeTimeoutMilliseconds);
+                        if (initializationDeadline > deadlineUtc) initializationDeadline = deadlineUtc;
+                        rpc.ReceiveResult(1, initializationDeadline);
+                        initializeMs = phaseWatch.ElapsedMilliseconds;
+                        rpc.Send("{\"method\":\"initialized\",\"params\":{}}");
+                        phase = "quota";
+                        phaseWatch.Restart();
+                        bool enhanced = !String.Equals(legacyParamsPath, snapshot.CliPath, StringComparison.OrdinalIgnoreCase);
+                        rpc.Send("{\"method\":\"account/rateLimits/read\",\"id\":2"
+                            + (enhanced ? ",\"params\":{\"excludeResetCreditDetails\":true}" : "") + "}");
+                        Dictionary<string, object> result;
+                        try { result = rpc.ReceiveResult(2, deadlineUtc); }
+                        catch (QuotaException error)
+                        {
+                            if (!enhanced || !error.UnsupportedParams) throw;
+                            // Older servers can reject the optional optimization.
+                            // Retry the same read once without parameters and
+                            // remember this capability for the selected CLI path.
+                            legacyParamsPath = snapshot.CliPath;
+                            rpc.Send("{\"method\":\"account/rateLimits/read\",\"id\":3}");
+                            result = rpc.ReceiveResult(3, deadlineUtc);
+                        }
+                        quotaMs = phaseWatch.ElapsedMilliseconds;
+                        List<QuotaBucket> buckets = ParseBuckets(result);
+                        if (buckets.Count == 0)
+                            throw new QuotaException(CodexStatus.Error, "账户未返回可用额度窗口；请稍后重试。");
 
-                    lastBuckets = CloneBuckets(buckets);
-                    lastSuccessUtc = DateTime.UtcNow;
-                    snapshot.Status = CodexStatus.Ready;
-                    snapshot.StatusMessage = "额度已更新。";
-                    snapshot.Buckets = buckets;
-                    snapshot.LastSuccessUtc = lastSuccessUtc;
-                    snapshot.IsStale = false;
-                    return snapshot;
-                }
-                catch (QuotaException exception)
-                {
-                    return Fail(snapshot, exception.Status, exception.SafeMessage);
-                }
-                catch (Exception)
-                {
-                    // Do not expose raw RPC/stderr/exception messages: they may
-                    // include account identifiers or information from user config.
-                    return Fail(snapshot, rpc != null && rpc.LoginHint ? CodexStatus.LoginRequired : CodexStatus.Error,
-                        rpc != null && rpc.LoginHint ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。"
-                        : "无法启动 Codex 或读取额度；请检查 CLI 路径、版本及网络。");
-                }
-                finally
-                {
-                    lock (processGate)
-                    {
-                        if (Object.ReferenceEquals(activeProcess, rpc)) activeProcess = null;
+                        lastBuckets = CloneBuckets(buckets);
+                        lastSuccessUtc = DateTime.UtcNow;
+                        snapshot.Status = CodexStatus.Ready;
+                        snapshot.StatusMessage = "额度已更新。";
+                        snapshot.Buckets = buckets;
+                        snapshot.LastSuccessUtc = lastSuccessUtc;
+                        snapshot.IsStale = false;
+                        RecordDiagnostics(attempt, "complete", launchMs, initializeMs, quotaMs, rpc);
+                        return snapshot;
                     }
-                    if (rpc != null) rpc.Dispose();
+                    catch (QuotaException exception)
+                    {
+                        if (phase == "initialize") initializeMs = phaseWatch.ElapsedMilliseconds;
+                        if (phase == "quota") quotaMs = phaseWatch.ElapsedMilliseconds;
+                        RecordDiagnostics(attempt, phase, launchMs, initializeMs, quotaMs, rpc);
+                        // Do not lengthen the previous total 18-second budget.
+                        // Only fast transient quota failures get one retry; a
+                        // full timeout is left to the host's scheduled retry.
+                        retry = phase == "quota" && exception.Retryable && attempt == 1 && !disposed
+                            && (deadlineUtc - DateTime.UtcNow).TotalMilliseconds >= 4000;
+                        if (!retry)
+                        {
+                            string message = exception.SafeMessage;
+                            if (exception.TimedOut)
+                                message = phase == "initialize" ? "Codex 初始化超时，请检查 CLI 或稍后重试。"
+                                    : "额度服务器响应超时，请稍后重试。";
+                            return Fail(snapshot, exception.Status, message);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // Never expose raw RPC/stderr/exception messages.
+                        RecordDiagnostics(attempt, phase, launchMs, initializeMs, phaseWatch.ElapsedMilliseconds, rpc);
+                        return Fail(snapshot, rpc != null && rpc.LoginHint ? CodexStatus.LoginRequired : CodexStatus.Error,
+                            rpc != null && rpc.LoginHint ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。"
+                            : "无法启动 Codex 或读取额度；请检查 CLI 路径、版本及网络。");
+                    }
+                    finally
+                    {
+                        lock (processGate)
+                        {
+                            if (Object.ReferenceEquals(activeProcess, rpc)) activeProcess = null;
+                        }
+                        if (rpc != null) rpc.Dispose();
+                    }
+                    if (retry)
+                    {
+                        for (int pause = 0; pause < 6 && !disposed; pause++) Thread.Sleep(25);
+                        if (disposed) return Fail(snapshot, CodexStatus.Error, "额度读取模块已关闭。");
+                    }
                 }
+                return Fail(snapshot, CodexStatus.Error, "额度查询暂不可用，请稍后重试。");
             }
+        }
+
+        private void RecordDiagnostics(int attempts, string phase, long launchMs, long initializeMs, long quotaMs, RpcProcess rpc)
+        {
+            LastDiagnostics = "phase=" + phase + ";attempts=" + attempts + ";launchMs=" + launchMs
+                + ";initializeMs=" + initializeMs + ";quotaMs=" + quotaMs + ";legacyParams="
+                + !String.IsNullOrEmpty(legacyParamsPath) + ";" + (rpc == null ? "noProcess" : rpc.SafeDiagnostics);
         }
 
         public static string FindCodexPath(string customPath)
@@ -291,7 +353,10 @@ namespace CodexTaskbarMonitor
         {
             public readonly CodexStatus Status;
             public readonly string SafeMessage;
-            public QuotaException(CodexStatus status, string safeMessage) { Status = status; SafeMessage = safeMessage; }
+            public readonly bool Retryable, UnsupportedParams, TimedOut;
+            public QuotaException(CodexStatus status, string safeMessage, bool retryable = false,
+                bool unsupportedParams = false, bool timedOut = false)
+            { Status = status; SafeMessage = safeMessage; Retryable = retryable; UnsupportedParams = unsupportedParams; TimedOut = timedOut; }
         }
 
         private sealed class RpcProcess : IDisposable
@@ -309,7 +374,17 @@ namespace CodexTaskbarMonitor
             private int isDisposed;
             private bool stdoutClosed;
             private volatile bool loginHint;
+            private volatile bool networkHint, tlsHint, proxyHint, configurationHint;
+            private volatile bool resetDetailsTimeoutHint;
+            private int stderrLineCount;
             public bool LoginHint { get { return loginHint; } }
+            public string SafeDiagnostics
+            {
+                get { return "stderrLines=" + Interlocked.CompareExchange(ref stderrLineCount, 0, 0)
+                    + ";auth=" + loginHint + ";network=" + networkHint + ";tls=" + tlsHint
+                    + ";proxy=" + proxyHint + ";configuration=" + configurationHint
+                    + ";resetDetailsTimeout=" + resetDetailsTimeoutHint; }
+            }
 
             public RpcProcess(string executable)
             {
@@ -404,7 +479,19 @@ namespace CodexTaskbarMonitor
                 {
                     string line;
                     while ((line = errorOutput.ReadLine()) != null)
+                    {
+                        Interlocked.Increment(ref stderrLineCount);
                         if (IsLoginError(line)) loginHint = true;
+                        string lower = line.ToLowerInvariant();
+                        if (lower.Contains("timed out") || lower.Contains("timeout") || lower.Contains("error sending request")
+                            || lower.Contains("failed to connect") || lower.Contains("dns error") || lower.Contains("connection reset")
+                            || lower.Contains("connection closed") || lower.Contains("network is unreachable")) networkHint = true;
+                        if (lower.Contains("tls") || lower.Contains("certificate")) tlsHint = true;
+                        if (lower.Contains("proxy")) proxyHint = true;
+                        if (lower.Contains("failed to load config") || lower.Contains("invalid config")) configurationHint = true;
+                        if (lower.Contains("reset credit detail") && (lower.Contains("timed out") || lower.Contains("timeout")))
+                            resetDetailsTimeoutHint = true;
+                    }
                 }
                 catch (Exception) { }
             }
@@ -421,7 +508,8 @@ namespace CodexTaskbarMonitor
                 {
                     if (DateTime.UtcNow >= deadlineUtc)
                         throw new QuotaException(loginHint ? CodexStatus.LoginRequired : CodexStatus.Error,
-                            loginHint ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。" : "额度查询超时，请稍后重试。");
+                            loginHint ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。" : "额度查询超时，请稍后重试。",
+                            false, false, !loginHint);
                     string line = null;
                     bool closed;
                     lock (lineGate)
@@ -440,10 +528,23 @@ namespace CodexTaskbarMonitor
                         if (error != null)
                         {
                             double code;
-                            bool authentication = IsLoginError(Text(Value(error, "message")))
+                            string messageText = Text(Value(error, "message")) ?? String.Empty;
+                            string lower = messageText.ToLowerInvariant();
+                            bool numericCode = Number(Value(error, "code"), out code);
+                            bool authentication = IsLoginError(messageText)
                                 || (Number(Value(error, "code"), out code) && code == 401);
+                            bool unsupported = !authentication && (numericCode && code == -32602
+                                || lower.Contains("unknown field") || lower.Contains("unknown parameter")
+                                || lower.Contains("invalid params") || lower.Contains("invalid parameter"));
+                            bool transient = !authentication && !unsupported && (numericCode && (code == 502 || code == 503 || code == 504)
+                                || lower.Contains("error sending request") || lower.Contains("failed to connect")
+                                || lower.Contains("connection reset") || lower.Contains("connection closed")
+                                || lower.Contains("timed out") || lower.Contains("temporarily unavailable")
+                                || lower.Contains("502 bad gateway") || lower.Contains("503 service unavailable")
+                                || lower.Contains("504 gateway timeout"));
                             throw new QuotaException(authentication ? CodexStatus.LoginRequired : CodexStatus.Error,
-                                authentication ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。" : "Codex 未能返回额度；请检查版本或稍后重试。");
+                                authentication ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。" : "Codex 未能返回额度；请检查版本或稍后重试。",
+                                transient, unsupported);
                         }
                         Dictionary<string, object> result = AsObject(Value(message, "result"));
                         if (result == null) throw new QuotaException(CodexStatus.Error, "Codex 返回了无法识别的额度数据。");
@@ -455,7 +556,8 @@ namespace CodexTaskbarMonitor
                     int remaining = (int)Math.Ceiling((deadlineUtc - DateTime.UtcNow).TotalMilliseconds);
                     if (remaining <= 0)
                         throw new QuotaException(loginHint ? CodexStatus.LoginRequired : CodexStatus.Error,
-                            loginHint ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。" : "额度查询超时，请稍后重试。");
+                            loginHint ? "请使用 Codex 的官方登录流程重新登录 ChatGPT。" : "额度查询超时，请稍后重试。",
+                            false, false, !loginHint);
                     changed.WaitOne(Math.Min(remaining, 250));
                 }
             }

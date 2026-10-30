@@ -109,6 +109,55 @@ internal static class CodexProbe
         {
             using (CodexQuotaClient client = new CodexQuotaClient())
             {
+                Scenario("no-details");
+                Stopwatch timer = Stopwatch.StartNew();
+                CodexSnapshot optimized = client.Read(Self);
+                Check(optimized.Status == CodexStatus.Ready && timer.ElapsedMilliseconds < 3000,
+                    "background poll excludes unused reset-credit details");
+            }
+            using (CodexQuotaClient client = new CodexQuotaClient())
+            {
+                Scenario("old-cli");
+                CodexSnapshot compatibility = client.Read(Self);
+                Check(compatibility.Status == CodexStatus.Ready && client.LastDiagnostics.Contains("legacyParams=True"),
+                    "older CLI invalid-params response falls back to basic read");
+                Scenario("old-cli-basic-only");
+                CodexSnapshot cachedCompatibility = client.Read(Self);
+                Check(cachedCompatibility.Status == CodexStatus.Ready,
+                    "old CLI capability is cached for the selected executable");
+            }
+            using (CodexQuotaClient client = new CodexQuotaClient())
+            {
+                Scenario("transient-once");
+                CodexSnapshot recovered = client.Read(Self);
+                Check(recovered.Status == CodexStatus.Ready && client.LastDiagnostics.Contains("attempts=2"),
+                    "one fast transient failure recovers within the shared timeout budget");
+                File.Delete(marker);
+                Scenario("transient-always");
+                Stopwatch timer = Stopwatch.StartNew();
+                CodexSnapshot repeated = client.Read(Self);
+                Check(repeated.Status == CodexStatus.Error && repeated.IsStale && repeated.Buckets.Count == 1
+                    && client.LastDiagnostics.Contains("attempts=2") && timer.ElapsedMilliseconds < 3000,
+                    "persistent transient failures retry at most once and retain last data");
+                Scenario("login");
+                CodexSnapshot login = client.Read(Self);
+                Check(login.Status == CodexStatus.LoginRequired && client.LastDiagnostics.Contains("attempts=1"),
+                    "authentication errors are not retried as network failures");
+            }
+            using (CodexQuotaClient client = new CodexQuotaClient())
+            {
+                Scenario("initialize-timeout");
+                Stopwatch timer = Stopwatch.StartNew();
+                CodexSnapshot timeout = client.Read(Self);
+                int helperId = Int32.Parse(File.ReadAllText(marker));
+                Check(timeout.Status == CodexStatus.Error && timeout.StatusMessage.Contains("初始化超时")
+                    && client.LastDiagnostics.Contains("phase=initialize") && timer.ElapsedMilliseconds >= 4500
+                    && timer.ElapsedMilliseconds < 8000, "initialization timeout is distinct and bounded");
+                Check(WaitUntilExited(helperId, 2000), "initialization timeout cleans up its helper");
+            }
+            File.Delete(marker);
+            using (CodexQuotaClient client = new CodexQuotaClient())
+            {
                 Scenario("early-helper");
                 CodexSnapshot earlyHelper = client.Read(Self);
                 int helperId = Int32.Parse(File.ReadAllText(marker));
@@ -187,6 +236,7 @@ internal static class CodexProbe
                     Console.WriteLine("durationMins=" + window.WindowDurationMins + "; usedPercent=" + window.UsedPercent
                         + "; resetUtc=" + (window.ResetsAtUtc.HasValue ? window.ResetsAtUtc.Value.ToString("o") : "unknown"));
             if (snapshot.Status != CodexStatus.Ready) Console.WriteLine(snapshot.StatusMessage);
+            Console.WriteLine(client.LastDiagnostics);
             return snapshot.Status == CodexStatus.Ready ? 0 : 2;
         }
     }
@@ -195,16 +245,40 @@ internal static class CodexProbe
     {
         string scenario = Environment.GetEnvironmentVariable(ScenarioVariable);
         if (String.IsNullOrEmpty(scenario)) return 3;
-        if (scenario == "early-helper") SpawnHelper();
+        if (scenario == "early-helper" || scenario == "initialize-timeout") SpawnHelper();
         string line;
         while ((line = Console.ReadLine()) != null)
         {
             Dictionary<string, object> request = Json.DeserializeObject(line) as Dictionary<string, object>;
             string method = (string)request["method"];
-            if (method == "initialize") Console.WriteLine("{\"id\":1,\"result\":{}}");
+            if (method == "initialize")
+            {
+                if (scenario == "initialize-timeout") { Thread.Sleep(60000); return 0; }
+                Console.WriteLine("{\"id\":1,\"result\":{}}");
+            }
             else if (method == "initialized") { }
             else if (method == "account/rateLimits/read")
             {
+                string prefix = "{\"id\":" + Convert.ToInt32(request["id"]) + ",";
+                Dictionary<string, object> parameters = request.ContainsKey("params")
+                    ? request["params"] as Dictionary<string, object> : null;
+                bool excluded = parameters != null && parameters.ContainsKey("excludeResetCreditDetails")
+                    && Object.Equals(parameters["excludeResetCreditDetails"], true);
+                if (scenario == "no-details" && !excluded) { Thread.Sleep(60000); return 0; }
+                if ((scenario == "old-cli" && parameters != null) || (scenario == "old-cli-basic-only" && parameters != null))
+                {
+                    Console.WriteLine(prefix + "\"error\":{\"code\":-32602,\"message\":\"unknown field excludeResetCreditDetails\"}}");
+                    Console.Out.Flush();
+                    continue;
+                }
+                if (scenario == "transient-always" || (scenario == "transient-once"
+                    && !File.Exists(Environment.GetEnvironmentVariable(MarkerVariable))))
+                {
+                    if (scenario == "transient-once") File.WriteAllText(Environment.GetEnvironmentVariable(MarkerVariable), "transient-observed");
+                    Console.WriteLine(prefix + "\"error\":{\"code\":-32603,\"message\":\"503 Service Unavailable\"}}");
+                    Console.Out.Flush();
+                    continue;
+                }
                 // A pipe-filling stderr burst verifies that the client drains it.
                 for (int i = 0; i < 100; i++) Console.Error.WriteLine(new string('x', 1000));
                 if (scenario == "helper" || scenario == "timeout")
@@ -213,13 +287,13 @@ internal static class CodexProbe
                 Console.WriteLine("non-JSON startup line");
                 Console.WriteLine("{\"method\":\"account/rateLimits/updated\",\"params\":{}}");
                 Console.WriteLine("{\"id\":999,\"result\":{}}");
-                if (scenario == "login") Console.WriteLine("{\"id\":2,\"error\":{\"code\":-32000,\"message\":\"Not logged in. Please run codex login.\"}}");
-                else if (scenario == "error") Console.WriteLine("{\"id\":2,\"error\":{\"code\":-32603,\"message\":\"FAKE_PRIVATE_ACCOUNT_IDENTIFIER\"}}");
-                else if (scenario == "empty") Console.WriteLine("{\"id\":2,\"result\":{\"rateLimits\":null,\"rateLimitsByLimitId\":null}}");
-                else if (scenario == "missing-fields") Console.WriteLine("{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"windowDurationMins\":10080},\"secondary\":{\"usedPercent\":45}}}}");
-                else if (scenario == "legacy") Console.WriteLine("{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":20,\"windowDurationMins\":300}}}}");
-                else if (scenario == "multi") Console.WriteLine("{\"id\":2,\"result\":{\"rateLimitsByLimitId\":{\"codex_other\":{\"limitName\":\"Other\",\"primary\":{\"usedPercent\":12,\"windowDurationMins\":60}},\"codex\":{\"primary\":{\"usedPercent\":20,\"windowDurationMins\":300},\"secondary\":{\"usedPercent\":43,\"windowDurationMins\":10080}}}}}");
-                else Console.WriteLine("{\"id\":2,\"result\":{\"rateLimitsByLimitId\":{\"codex\":{\"primary\":{\"usedPercent\":43,\"windowDurationMins\":10080,\"resetsAt\":1730947200},\"secondary\":null}}}}");
+                if (scenario == "login") Console.WriteLine(prefix + "\"error\":{\"code\":-32000,\"message\":\"Not logged in. Please run codex login.\"}}");
+                else if (scenario == "error") Console.WriteLine(prefix + "\"error\":{\"code\":-32603,\"message\":\"FAKE_PRIVATE_ACCOUNT_IDENTIFIER\"}}");
+                else if (scenario == "empty") Console.WriteLine(prefix + "\"result\":{\"rateLimits\":null,\"rateLimitsByLimitId\":null}}");
+                else if (scenario == "missing-fields") Console.WriteLine(prefix + "\"result\":{\"rateLimits\":{\"primary\":{\"windowDurationMins\":10080},\"secondary\":{\"usedPercent\":45}}}}");
+                else if (scenario == "legacy") Console.WriteLine(prefix + "\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":20,\"windowDurationMins\":300}}}}");
+                else if (scenario == "multi") Console.WriteLine(prefix + "\"result\":{\"rateLimitsByLimitId\":{\"codex_other\":{\"limitName\":\"Other\",\"primary\":{\"usedPercent\":12,\"windowDurationMins\":60}},\"codex\":{\"primary\":{\"usedPercent\":20,\"windowDurationMins\":300},\"secondary\":{\"usedPercent\":43,\"windowDurationMins\":10080}}}}}");
+                else Console.WriteLine(prefix + "\"result\":{\"rateLimitsByLimitId\":{\"codex\":{\"primary\":{\"usedPercent\":43,\"windowDurationMins\":10080,\"resetsAt\":1730947200},\"secondary\":null}}}}");
                 Console.Out.Flush();
             }
             else return 9; // Any thread/turn/model request makes the fixture fail.
